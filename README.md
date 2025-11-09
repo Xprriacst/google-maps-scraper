@@ -75,7 +75,25 @@ cp .env.example .env
 
 ### 🚀 Mode Prospection B2B Pro (Recommandé)
 
-**Interface interactive complète avec enrichissement et scoring automatique**
+**Interface web Streamlit moderne (🆕 Nouveau !)**
+
+```bash
+streamlit run app_streamlit_pro.py
+```
+
+Cette interface offre :
+- 🎨 Interface web moderne et intuitive
+- 📊 Visualisations en temps réel (graphiques, tableaux)
+- 🔍 Configuration guidée (recherche, nombre, score min)
+- ⭐ Système de scoring automatique (0-100)
+- 📈 Graphiques interactifs (distribution scores, catégories)
+- 🔎 Filtres dynamiques (score, catégorie, confiance email)
+- 📥 Export CSV avec un clic
+- 🌐 **Déployable en ligne sur Streamlit Cloud (gratuit)**
+
+📖 **[Guide de déploiement Streamlit Cloud](DEPLOYMENT.md)**
+
+**Interface CLI interactive**
 
 ```bash
 python3 app_prospection.py
