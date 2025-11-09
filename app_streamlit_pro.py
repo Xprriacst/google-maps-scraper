@@ -83,8 +83,6 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 if 'running' not in st.session_state:
     st.session_state.running = False
-if 'stats' not in st.session_state:
-    st.session_state.stats = None
 
 def render_header():
     """Affiche l'en-tête de l'application"""
@@ -297,10 +295,10 @@ def render_statistics(stats):
     """Affiche les statistiques sous forme de métriques"""
     st.subheader("📊 Statistiques globales")
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
 
     with col1:
-        st.metric("Total enrichi", stats['total'])
+        st.metric("Total scrapé", stats['total'])
     with col2:
         st.metric("🟢 Premium", stats['premium'], f"{stats['premium_pct']}%")
     with col3:
@@ -308,6 +306,8 @@ def render_statistics(stats):
     with col4:
         st.metric("🟠 À vérifier", stats['verify'])
     with col5:
+        st.metric("🔴 Faibles", stats['weak'])
+    with col6:
         st.metric("Score moyen", f"{stats['avg_score']}/100")
 
 def render_charts(enriched_contacts):
@@ -354,7 +354,7 @@ def render_charts(enriched_contacts):
 
 def render_contacts_table(contacts):
     """Affiche le tableau des contacts avec filtres"""
-    st.subheader("📋 Liste des contacts qualifiés")
+    st.subheader("📋 Liste complète des entreprises")
 
     # Filtres
     col1, col2, col3 = st.columns(3)
@@ -363,7 +363,8 @@ def render_contacts_table(contacts):
         filter_category = st.multiselect(
             "Filtrer par catégorie",
             options=['Premium', 'Qualifié', 'À vérifier', 'Faible'],
-            default=['Premium', 'Qualifié']
+            default=['Premium', 'Qualifié', 'À vérifier', 'Faible'],
+            key='filter_cat'
         )
 
     with col2:
@@ -371,15 +372,17 @@ def render_contacts_table(contacts):
             "Score minimum",
             min_value=0,
             max_value=100,
-            value=50,
-            step=10
+            value=0,
+            step=10,
+            key='filter_score'
         )
 
     with col3:
         filter_confidence = st.multiselect(
             "Confiance email",
             options=['high', 'medium', 'low', 'none'],
-            default=['high', 'medium']
+            default=['high', 'medium', 'low', 'none'],
+            key='filter_conf'
         )
 
     # Filtrer les contacts
@@ -427,9 +430,10 @@ def render_contacts_table(contacts):
     st.download_button(
         label="📥 Télécharger en CSV",
         data=csv,
-        file_name=f"contacts_qualifies_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        file_name=f"contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         mime="text/csv",
-        use_container_width=True
+        use_container_width=True,
+        key='download_csv'
     )
 
 def main():
@@ -448,7 +452,7 @@ def main():
         results = st.session_state.results
 
         # Onglets
-        tab1, tab2, tab3 = st.tabs(["📊 Statistiques", "📋 Contacts qualifiés", "📈 Graphiques"])
+        tab1, tab2, tab3 = st.tabs(["📊 Statistiques", "📋 Toutes les entreprises", "📈 Graphiques"])
 
         with tab1:
             render_statistics(results['stats'])
@@ -470,7 +474,7 @@ def main():
                 st.info(f"Moyenne: {sum(c.get('score_company', 0) for c in results['enriched']) / len(results['enriched']):.1f}/30")
 
         with tab2:
-            render_contacts_table(results['qualified'])
+            render_contacts_table(results['enriched'])
 
         with tab3:
             render_charts(results['enriched'])
