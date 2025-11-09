@@ -1,0 +1,6 @@
+# Packages système requis pour Streamlit Cloud
+# Ces packages seront installés via apt-get
+
+# Requis pour lxml (parser HTML/XML)
+libxml2-dev
+libxslt1-dev
