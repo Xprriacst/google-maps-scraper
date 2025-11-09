@@ -43,6 +43,39 @@ Le script vous demandera :
 - La recherche à effectuer (ex: "restaurants à Paris")
 - Le nombre d'entreprises à scraper (par défaut: 50)
 
+### Interface interactive (Recommandé)
+
+Pour lancer l'interface interactive en ligne de commande :
+
+```bash
+python3 app_interactive.py
+```
+
+Cette interface offre :
+- 🎯 Menu intuitif avec 5 options
+- 🔍 Configuration guidée du scraping
+- ⚙️ Test de configuration intégré
+- ❓ Aide et documentation intégrées
+- 📋 Historique des recherches
+
+### Interface web (Flask)
+
+Pour lancer l'interface web (expérimental) :
+
+```bash
+python3 app_simple.py
+```
+
+Puis ouvrez http://localhost:5000 dans votre navigateur.
+
+### Interface graphique (Tkinter - macOS limité)
+
+```bash
+python3 app_gui.py
+```
+
+*Note: Peut avoir des problèmes de compatibilité sur macOS récents*
+
 ## Structure des données
 
 Le Google Sheet contiendra les colonnes suivantes :
