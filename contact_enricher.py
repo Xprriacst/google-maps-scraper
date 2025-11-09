@@ -295,9 +295,35 @@ class ContactEnricher:
         if len(words) < 2:
             return False
 
-        # Chaque mot doit commencer par une majuscule
+        # Mots à exclure (articles, prépositions, etc.)
+        excluded_words = {
+            'de', 'la', 'le', 'du', 'des', 'et', 'ou', 'à', 'au', 'aux',
+            'en', 'pour', 'par', 'sur', 'dans', 'avec', 'sans', 'nous',
+            'notre', 'votre', 'leur', 'son', 'sa', 'ses', 'un', 'une'
+        }
+
+        # Vérifier que les mots ne sont pas des mots exclus
+        valid_words = []
         for word in words:
-            if not word[0].isupper():
+            # Ignorer les mots trop courts (< 3 caractères) sauf si majuscule
+            if len(word) < 3:
+                continue
+
+            # Exclure les mots français courants
+            if word.lower() in excluded_words:
+                continue
+
+            # Le mot doit commencer par une majuscule
+            if word[0].isupper():
+                valid_words.append(word)
+
+        # Il faut au moins 2 mots valides pour un nom complet
+        if len(valid_words) < 2:
+            return False
+
+        # Vérifier que les mots valides contiennent au moins 3 lettres chacun
+        for word in valid_words:
+            if len(word) < 3:
                 return False
 
         return True
