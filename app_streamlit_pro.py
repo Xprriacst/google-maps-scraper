@@ -426,11 +426,15 @@ def render_contacts_table(contacts):
     )
 
     # Bouton d'export CSV
+    # Stocker le timestamp pour éviter qu'il change à chaque re-run
+    if 'csv_timestamp' not in st.session_state:
+        st.session_state.csv_timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
     csv = df_display.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="📥 Télécharger en CSV",
         data=csv,
-        file_name=f"contacts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        file_name=f"contacts_{st.session_state.csv_timestamp}.csv",
         mime="text/csv",
         use_container_width=True,
         key='download_csv'
