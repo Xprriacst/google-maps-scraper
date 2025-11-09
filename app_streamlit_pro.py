@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 # Import des modules
 from scraper_pro import GoogleMapsScraperPro
 from contact_scorer import ContactScorer
+from utils import get_env
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -100,9 +101,15 @@ def render_sidebar():
 
     # Vérifier la configuration
     with st.sidebar.expander("🔑 Vérifier la configuration", expanded=False):
-        apify_ok = bool(os.getenv('APIFY_API_TOKEN'))
-        sheets_ok = bool(os.getenv('GOOGLE_SHEET_ID'))
+        apify_ok = bool(get_env('APIFY_API_TOKEN'))
+        sheets_ok = bool(get_env('GOOGLE_SHEET_ID'))
+        # Vérifier credentials (local ou Streamlit Cloud)
         creds_ok = os.path.exists('credentials.json')
+        try:
+            if 'gcp_service_account' in st.secrets:
+                creds_ok = True
+        except:
+            pass
 
         st.write("**APIFY_API_TOKEN:**", "✅" if apify_ok else "❌")
         st.write("**GOOGLE_SHEET_ID:**", "✅" if sheets_ok else "❌")

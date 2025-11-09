@@ -12,9 +12,11 @@ from apify_client import ApifyClient
 import gspread
 from google.oauth2.service_account import Credentials
 from typing import Dict, List
+import json
 
 from contact_enricher import ContactEnricher
 from contact_scorer import ContactScorer
+from utils import get_env, get_gcp_credentials
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -38,8 +40,8 @@ class GoogleMapsScraperPro:
         Args:
             min_score: Score minimum pour exporter un contact (défaut: 50)
         """
-        self.apify_token = os.getenv('APIFY_API_TOKEN')
-        self.google_sheet_id = os.getenv('GOOGLE_SHEET_ID')
+        self.apify_token = get_env('APIFY_API_TOKEN')
+        self.google_sheet_id = get_env('GOOGLE_SHEET_ID')
 
         # Vérifier les clés essentielles
         if not self.apify_token:
@@ -65,11 +67,17 @@ class GoogleMapsScraperPro:
                 'https://www.googleapis.com/auth/drive'
             ]
 
-            # Charger les credentials
-            creds = Credentials.from_service_account_file(
-                'credentials.json',
-                scopes=scopes
-            )
+            # Charger les credentials (compatible Streamlit Cloud et local)
+            gcp_creds = get_gcp_credentials()
+
+            if isinstance(gcp_creds, dict):
+                # Mode Streamlit Cloud : créer depuis dict
+                creds = Credentials.from_service_account_info(gcp_creds, scopes=scopes)
+            elif isinstance(gcp_creds, str):
+                # Mode local : charger depuis fichier
+                creds = Credentials.from_service_account_file(gcp_creds, scopes=scopes)
+            else:
+                raise FileNotFoundError("Credentials Google Cloud non trouvées")
 
             # Autoriser gspread
             gc = gspread.authorize(creds)
