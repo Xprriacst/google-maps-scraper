@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from scraper_pro import GoogleMapsScraperPro
 from contact_scorer import ContactScorer
 from utils import get_env
+from google_sheets_exporter import GoogleSheetsExporter
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -117,6 +118,38 @@ def render_sidebar():
 
         if not (apify_ok and sheets_ok):
             st.warning("⚠️ Configuration incomplète. Consultez le README.")
+
+    st.sidebar.markdown("---")
+
+    # Configuration Google Sheets Export
+    with st.sidebar.expander("📊 Export Google Sheets", expanded=False):
+        enable_export = st.checkbox(
+            "Activer l'export automatique",
+            value=True,
+            help="Sauvegarder toutes les prospections dans un Google Sheet"
+        )
+
+        if enable_export:
+            # Vérifier si les credentials sont configurés
+            gs_creds = get_env('GOOGLE_SHEETS_CREDENTIALS_JSON')
+            if gs_creds:
+                st.success("✅ Credentials configurés")
+
+                # Nom du spreadsheet
+                gs_name = st.text_input(
+                    "Nom du spreadsheet",
+                    value="Prospection B2B - Historique",
+                    help="Le spreadsheet sera créé s'il n'existe pas"
+                )
+
+                # Stocker dans session state
+                st.session_state.gs_export_enabled = True
+                st.session_state.gs_spreadsheet_name = gs_name
+            else:
+                st.warning("⚠️ Configurez GOOGLE_SHEETS_CREDENTIALS_JSON dans les secrets")
+                st.session_state.gs_export_enabled = False
+        else:
+            st.session_state.gs_export_enabled = False
 
     st.sidebar.markdown("---")
 
@@ -284,6 +317,35 @@ def run_prospection(search_query, max_results):
             }
 
             st.success(f"✅ **{len(qualified)}** contacts qualifiés trouvés sur {len(enriched)} entreprises enrichies !")
+
+            # Export vers Google Sheets si activé
+            if st.session_state.get('gs_export_enabled', False):
+                try:
+                    status_text.text("📊 Export vers Google Sheets...")
+                    gs_creds = get_env('GOOGLE_SHEETS_CREDENTIALS_JSON')
+                    gs_name = st.session_state.get('gs_spreadsheet_name', 'Prospection B2B - Historique')
+
+                    exporter = GoogleSheetsExporter(gs_creds, gs_name)
+                    exporter.get_or_create_spreadsheet()
+
+                    # Exporter les résultats
+                    success = exporter.export_prospection(search_query, qualified)
+
+                    if success:
+                        sheet_url = exporter.get_spreadsheet_url()
+                        st.success(f"📊 Export Google Sheets réussi ! [Voir le spreadsheet]({sheet_url})")
+
+                        # Afficher les stats
+                        gs_stats = exporter.get_stats()
+                        st.info(f"📈 Total lignes sauvegardées: {gs_stats.get('total_rows', 0)}")
+                    else:
+                        st.warning("⚠️ L'export vers Google Sheets a échoué (voir logs)")
+
+                except Exception as gs_error:
+                    st.warning(f"⚠️ Erreur lors de l'export Google Sheets: {gs_error}")
+                    import traceback
+                    with st.expander("Détails de l'erreur"):
+                        st.code(traceback.format_exc())
 
         except Exception as e:
             st.error(f"❌ Erreur: {str(e)}")
