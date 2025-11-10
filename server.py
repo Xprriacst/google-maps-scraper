@@ -10,6 +10,7 @@ import threading
 import os
 from urllib.parse import parse_qs, urlparse
 from scraper import GoogleMapsScraper
+from scraper_pro import GoogleMapsScraperPro
 
 # État global du scraping
 scraping_state = {
@@ -18,7 +19,8 @@ scraping_state = {
     "message": "En attente",
     "total": 0,
     "current": 0,
-    "results": []
+    "results": [],
+    "mode": "simple"  # "simple" ou "pro"
 }
 
 class ScraperHandler(BaseHTTPRequestHandler):
@@ -40,78 +42,115 @@ class ScraperHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Traite les requêtes POST"""
         parsed_path = urlparse(self.path)
-        
+
         if parsed_path.path == '/api/start':
-            # Démarrer le scraping
+            # Démarrer le scraping Simple
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
-            
+
             if scraping_state["running"]:
                 self.send_json_response({"success": False, "error": "Scraping déjà en cours"})
                 return
-            
+
             # Démarrer le scraping dans un thread
             search_query = data.get('search_query', '')
             max_results = data.get('max_results', 50)
-            
+
             if not search_query:
                 self.send_json_response({"success": False, "error": "Recherche vide"})
                 return
-            
-            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results))
+
+            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'simple', 0))
             thread.daemon = True
             thread.start()
-            
+
             self.send_json_response({"success": True})
+
+        elif parsed_path.path == '/api/start-pro':
+            # Démarrer le scraping PRO
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+
+            if scraping_state["running"]:
+                self.send_json_response({"success": False, "error": "Scraping déjà en cours"})
+                return
+
+            # Démarrer le scraping dans un thread
+            search_query = data.get('search_query', '')
+            max_results = data.get('max_results', 50)
+            min_score = data.get('min_score', 70)
+
+            if not search_query:
+                self.send_json_response({"success": False, "error": "Recherche vide"})
+                return
+
+            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'pro', min_score))
+            thread.daemon = True
+            thread.start()
+
+            self.send_json_response({"success": True})
+
         else:
             self.send_error(404)
     
-    def run_scraper(self, search_query, max_results):
+    def run_scraper(self, search_query, max_results, mode='simple', min_score=0):
         """Exécute le scraping"""
         global scraping_state
-        
+
         try:
             scraping_state["running"] = True
             scraping_state["progress"] = 0
-            scraping_state["message"] = f"Recherche de {max_results} entreprises: {search_query}"
+            scraping_state["mode"] = mode
             scraping_state["total"] = max_results
             scraping_state["current"] = 0
             scraping_state["results"] = []
-            
-            scraper = GoogleMapsScraper()
-            
+
+            if mode == 'pro':
+                scraping_state["message"] = f"🎯 Mode PRO - Recherche de {max_results} entreprises: {search_query} (Score min: {min_score})"
+                scraper = GoogleMapsScraperPro(min_score=min_score)
+            else:
+                scraping_state["message"] = f"Recherche de {max_results} entreprises: {search_query}"
+                scraper = GoogleMapsScraper()
+
             # Scraping Google Maps
             scraping_state["message"] = "📥 Scraping Google Maps..."
             scraping_state["progress"] = 10
             results = scraper.scrape_google_maps(search_query, max_results)
-            
+
             if not results:
                 scraping_state["message"] = "❌ Aucun résultat trouvé"
                 scraping_state["running"] = False
                 return
-            
+
             scraping_state["message"] = f"✅ {len(results)} entreprises trouvées"
             scraping_state["progress"] = 30
-            
+
             # Traitement
-            scraping_state["message"] = "🔄 Recherche des emails..."
+            if mode == 'pro':
+                scraping_state["message"] = "🔄 Enrichissement des contacts (Mode PRO)..."
+            else:
+                scraping_state["message"] = "🔄 Recherche des emails..."
             processed_data = scraper.process_results(results)
             scraping_state["progress"] = 60
-            
+
             # Sauvegarde Google Sheets
             scraping_state["message"] = "📝 Sauvegarde dans Google Sheets..."
             scraper.save_to_google_sheets(processed_data)
             scraping_state["progress"] = 80
-            
+
             # GoHighLevel
             scraping_state["message"] = "📤 Envoi vers GoHighLevel..."
             scraper.send_to_gohighlevel(processed_data)
             scraping_state["progress"] = 100
-            
-            scraping_state["message"] = "✅ Scraping terminé avec succès!"
+
+            if mode == 'pro':
+                scraping_state["message"] = f"✅ Scraping PRO terminé! {len(processed_data)} entreprises qualifiées (Score ≥ {min_score})"
+            else:
+                scraping_state["message"] = "✅ Scraping terminé avec succès!"
             scraping_state["results"] = processed_data
-            
+
         except Exception as e:
             scraping_state["message"] = f"❌ Erreur: {str(e)}"
             scraping_state["progress"] = 0
@@ -263,6 +302,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
             cursor: pointer;
             transition: all 0.3s;
             box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            margin-bottom: 10px;
         }
 
         .btn:hover:not(:disabled) {
@@ -273,6 +313,15 @@ class ScraperHandler(BaseHTTPRequestHandler):
         .btn:disabled {
             opacity: 0.6;
             cursor: not-allowed;
+        }
+
+        .btn-pro {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        .btn-pro:hover:not(:disabled) {
+            box-shadow: 0 6px 20px rgba(245, 87, 108, 0.6);
         }
 
         .status-card {
@@ -379,10 +428,10 @@ class ScraperHandler(BaseHTTPRequestHandler):
         <form id="scraperForm">
             <div class="form-group">
                 <label for="searchQuery">Recherche Google Maps</label>
-                <input 
-                    type="text" 
-                    id="searchQuery" 
-                    placeholder="Ex: restaurants à Paris" 
+                <input
+                    type="text"
+                    id="searchQuery"
+                    placeholder="Ex: restaurants à Paris"
                     required
                 >
             </div>
@@ -390,20 +439,39 @@ class ScraperHandler(BaseHTTPRequestHandler):
             <div class="form-group">
                 <label for="maxResults">Nombre d'entreprises</label>
                 <div class="slider-container">
-                    <input 
-                        type="range" 
-                        id="maxResults" 
-                        min="10" 
-                        max="200" 
-                        value="50" 
+                    <input
+                        type="range"
+                        id="maxResults"
+                        min="10"
+                        max="200"
+                        value="50"
                         step="10"
                     >
                     <div class="slider-value" id="sliderValue">50</div>
                 </div>
             </div>
 
-            <button type="submit" class="btn" id="submitBtn">
+            <div class="form-group" id="scoreGroup" style="display: none;">
+                <label for="minScore">Score minimum (Mode PRO uniquement)</label>
+                <div class="slider-container">
+                    <input
+                        type="range"
+                        id="minScore"
+                        min="0"
+                        max="100"
+                        value="70"
+                        step="5"
+                    >
+                    <div class="slider-value" id="scoreValue">70</div>
+                </div>
+            </div>
+
+            <button type="button" class="btn" id="submitBtn" onclick="startScraping('simple')">
                 🚀 Lancer le scraping
+            </button>
+
+            <button type="button" class="btn btn-pro" id="submitBtnPro" onclick="startScraping('pro')">
+                🎯 Lancer le scraping PRO
             </button>
         </form>
 
@@ -422,47 +490,71 @@ class ScraperHandler(BaseHTTPRequestHandler):
             </div>
             <div class="feature">
                 <div class="feature-icon">📧</div>
-                <div class="feature-text">Recherche d'emails</div>
+                <div class="feature-text">3 types de contacts</div>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🎯</div>
+                <div class="feature-text">Mode PRO: Scoring</div>
             </div>
             <div class="feature">
                 <div class="feature-icon">📊</div>
                 <div class="feature-text">Export Google Sheets</div>
             </div>
-            <div class="feature">
-                <div class="feature-icon">🚀</div>
-                <div class="feature-text">GoHighLevel</div>
-            </div>
         </div>
     </div>
 
     <script>
-        // Slider
+        // Sliders
         const slider = document.getElementById('maxResults');
         const sliderValue = document.getElementById('sliderValue');
+        const scoreSlider = document.getElementById('minScore');
+        const scoreValue = document.getElementById('scoreValue');
 
         slider.addEventListener('input', () => {
             sliderValue.textContent = slider.value;
         });
 
-        // Form
+        scoreSlider.addEventListener('input', () => {
+            scoreValue.textContent = scoreSlider.value;
+        });
+
+        // Form elements
         const form = document.getElementById('scraperForm');
         const submitBtn = document.getElementById('submitBtn');
+        const submitBtnPro = document.getElementById('submitBtnPro');
         const statusCard = document.getElementById('statusCard');
         const statusMessage = document.getElementById('statusMessage');
         const progressFill = document.getElementById('progressFill');
         const resultsDiv = document.getElementById('results');
+        const scoreGroup = document.getElementById('scoreGroup');
 
         let checkInterval;
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // Show/hide score slider based on button hover
+        submitBtnPro.addEventListener('mouseenter', () => {
+            scoreGroup.style.display = 'block';
+        });
 
+        async function startScraping(mode) {
             const searchQuery = document.getElementById('searchQuery').value;
-            const maxResults = parseInt(document.getElementById('maxResults').value);
 
-            // Désactiver le bouton
+            if (!searchQuery) {
+                alert('Veuillez entrer une recherche');
+                return;
+            }
+
+            const maxResults = parseInt(document.getElementById('maxResults').value);
+            const minScore = parseInt(document.getElementById('minScore').value);
+
+            // Désactiver les boutons
             submitBtn.disabled = true;
-            submitBtn.textContent = '⏳ Scraping en cours...';
+            submitBtnPro.disabled = true;
+
+            if (mode === 'pro') {
+                submitBtnPro.textContent = '⏳ Scraping PRO en cours...';
+            } else {
+                submitBtn.textContent = '⏳ Scraping en cours...';
+            }
 
             // Afficher le status
             statusCard.className = 'status-card active running';
@@ -471,10 +563,15 @@ class ScraperHandler(BaseHTTPRequestHandler):
             resultsDiv.style.display = 'none';
 
             try {
-                const response = await fetch('/api/start', {
+                const endpoint = mode === 'pro' ? '/api/start-pro' : '/api/start';
+                const body = mode === 'pro'
+                    ? { search_query: searchQuery, max_results: maxResults, min_score: minScore }
+                    : { search_query: searchQuery, max_results: maxResults };
+
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ search_query: searchQuery, max_results: maxResults })
+                    body: JSON.stringify(body)
                 });
 
                 const data = await response.json();
@@ -488,7 +585,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
             } catch (error) {
                 showError('Erreur de connexion: ' + error.message);
             }
-        });
+        }
 
         async function checkStatus() {
             try {
@@ -503,12 +600,15 @@ class ScraperHandler(BaseHTTPRequestHandler):
                     clearInterval(checkInterval);
                     statusCard.className = 'status-card active success';
                     submitBtn.disabled = false;
+                    submitBtnPro.disabled = false;
                     submitBtn.textContent = '🚀 Lancer le scraping';
+                    submitBtnPro.textContent = '🎯 Lancer le scraping PRO';
 
                     if (data.results && data.results.length > 0) {
                         resultsDiv.style.display = 'block';
+                        const modeText = data.mode === 'pro' ? ' (Mode PRO)' : '';
                         resultsDiv.innerHTML = `
-                            <strong>✅ ${data.results.length} entreprises scrapées</strong><br>
+                            <strong>✅ ${data.results.length} entreprises scrapées${modeText}</strong><br>
                             <small>Consultez votre Google Sheet pour voir les détails</small>
                         `;
                     }
@@ -527,7 +627,9 @@ class ScraperHandler(BaseHTTPRequestHandler):
             statusCard.className = 'status-card active error';
             statusMessage.textContent = message;
             submitBtn.disabled = false;
+            submitBtnPro.disabled = false;
             submitBtn.textContent = '🚀 Lancer le scraping';
+            submitBtnPro.textContent = '🎯 Lancer le scraping PRO';
             progressFill.style.width = '0%';
         }
     </script>
