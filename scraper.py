@@ -14,6 +14,7 @@ from google.oauth2.service_account import Credentials
 import requests
 import json
 from email_finder import EmailFinder
+from database_manager import DatabaseManager
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -37,6 +38,7 @@ class GoogleMapsScraper:
         self.apify_client = ApifyClient(self.apify_token)
         self.google_sheet = None
         self.email_finder = EmailFinder()
+        self.db = DatabaseManager()  # Base de données pour le cache
         self._init_google_sheets()
         
     def _init_google_sheets(self):
@@ -164,42 +166,69 @@ class GoogleMapsScraper:
     def save_to_google_sheets(self, businesses_data):
         """
         Sauvegarde les données dans Google Sheets
-        
+
         Args:
             businesses_data: Liste de dicts contenant les infos des entreprises
         """
         if not self.google_sheet:
             print("⚠️  Google Sheets non configuré, saut de cette étape")
             return
-        
+
         try:
             worksheet = self.google_sheet.worksheet('Entreprises')
-            
+
             print(f"📝 Ajout de {len(businesses_data)} entreprises dans Google Sheets...")
-            
-            for business in businesses_data:
-                row = [
-                    business.get('name', ''),
-                    business.get('address', ''),
-                    business.get('phone', ''),
-                    business.get('website', ''),
-                    business.get('rating', ''),
-                    business.get('reviews_count', ''),
-                    business.get('category', ''),
-                    business.get('contact_name', ''),
-                    business.get('contact_email', ''),
-                    business.get('email_confidence', 'low'),
-                    business.get('contact_position', ''),
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    business.get('url', '')
-                ]
-                worksheet.append_row(row)
-                time.sleep(0.5)  # Éviter de dépasser les limites d'API
-            
+
+            for idx, business in enumerate(businesses_data, 1):
+                try:
+                    row = [
+                        business.get('name', ''),
+                        business.get('address', ''),
+                        business.get('phone', ''),
+                        business.get('website', ''),
+                        business.get('rating', ''),
+                        business.get('reviews_count', ''),
+                        business.get('category', ''),
+                        business.get('contact_name', ''),
+                        business.get('contact_email', ''),
+                        business.get('email_confidence', 'low'),
+                        business.get('contact_position', ''),
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        business.get('url', '')
+                    ]
+                    worksheet.append_row(row)
+                    time.sleep(0.5)  # Éviter de dépasser les limites d'API
+
+                except Exception as row_error:
+                    # Vérifier si c'est une erreur de quota Google Drive
+                    error_str = str(row_error)
+                    if '403' in error_str and 'quota' in error_str.lower():
+                        print(f"\n⚠️  ERREUR: Quota de stockage Google Drive dépassé !")
+                        print(f"   Entreprise {idx}/{len(businesses_data)} - Impossible de continuer l'export vers Sheets")
+                        print(f"\n💡 SOLUTIONS:")
+                        print(f"   1. Libérez de l'espace sur votre Google Drive")
+                        print(f"   2. Supprimez d'anciennes Google Sheets")
+                        print(f"   3. Utilisez un autre compte Google")
+                        print(f"\n📦 Les données restent disponibles dans la base de données locale")
+                        raise row_error  # Propager l'erreur
+                    else:
+                        print(f"⚠️  Erreur pour {business.get('name', 'N/A')}: {row_error}")
+                        continue
+
             print("✅ Données ajoutées à Google Sheets")
-            
+
         except Exception as e:
-            print(f"❌ Erreur lors de l'ajout à Google Sheets: {e}")
+            error_str = str(e)
+            # Gestion spécifique de l'erreur de quota
+            if '403' in error_str and 'quota' in error_str.lower():
+                print(f"\n❌ Erreur Google Sheets - Quota de stockage dépassé")
+                print(f"   Message: {e}")
+                return False
+            else:
+                print(f"❌ Erreur lors de l'ajout à Google Sheets: {e}")
+                return False
+
+        return True
     
     def send_to_gohighlevel(self, businesses_data):
         """
@@ -276,21 +305,24 @@ class GoogleMapsScraper:
     
     def process_results(self, results):
         """
-        Traite les résultats d'Apify et enrichit avec les contacts
-        
+        Traite les résultats d'Apify et enrichit avec les contacts (avec cache intelligent)
+
         Args:
             results: Résultats bruts d'Apify
-        
+
         Returns:
             Liste enrichie avec les informations de contact
         """
         processed_data = []
-        
+        cache_hits = 0
+        new_searches = 0
+
         print(f"🔄 Traitement et enrichissement de {len(results)} entreprises...")
-        
+
         for idx, result in enumerate(results, 1):
-            print(f"  [{idx}/{len(results)}] Traitement de {result.get('title', 'N/A')}...")
-            
+            company_name = result.get('title', 'N/A')
+            print(f"  [{idx}/{len(results)}] {company_name}...")
+
             # Extraire les données de base
             business = {
                 'name': result.get('title', ''),
@@ -302,21 +334,56 @@ class GoogleMapsScraper:
                 'category': result.get('categoryName', ''),
                 'url': result.get('url', ''),
             }
-            
-            # Chercher les informations de contact
-            contact = self.find_contact_info(
+
+            # Vérifier le cache
+            company_id = self.db.company_exists(
                 business['name'],
-                business['website']
+                business['website'],
+                business['url']
             )
-            
-            business['contact_name'] = contact['name']
-            business['contact_email'] = contact['email']
-            business['email_confidence'] = contact.get('email_confidence', 'low')
-            business['contact_position'] = contact['position']
-            
+
+            if company_id:
+                # Utiliser les données du cache
+                print(f"    💾 Contact trouvé en cache")
+                cached_data = self.db.get_company_data(company_id)
+
+                # Fusionner avec les données fraîches de Google Maps
+                business.update({
+                    'contact_name': cached_data.get('contact_name', ''),
+                    'contact_email': cached_data.get('contact_email', ''),
+                    'email_confidence': cached_data.get('email_confidence', 'low'),
+                    'contact_position': cached_data.get('contact_position', '')
+                })
+                cache_hits += 1
+            else:
+                # Chercher les informations de contact
+                print(f"    🔍 Recherche du contact...")
+                contact = self.find_contact_info(
+                    business['name'],
+                    business['website']
+                )
+
+                business['contact_name'] = contact['name']
+                business['contact_email'] = contact['email']
+                business['email_confidence'] = contact.get('email_confidence', 'low')
+                business['contact_position'] = contact['position']
+
+                # Sauvegarder dans la base
+                self.db.save_company(business)
+                new_searches += 1
+
             processed_data.append(business)
-        
+
         print("✅ Traitement terminé")
+        print(f"   💾 Cache: {cache_hits} entreprises")
+        print(f"   🔍 Nouvelles: {new_searches} entreprises")
+
+        # Stats de la DB
+        db_stats = self.db.get_stats()
+        print(f"\n📊 Base de données totale:")
+        print(f"   Entreprises: {db_stats['total_companies']}")
+        print(f"   Avec emails: {db_stats['companies_with_email']}")
+
         return processed_data
     
     def run(self, search_query, max_results=50):

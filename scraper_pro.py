@@ -15,6 +15,7 @@ from typing import Dict, List
 
 from contact_enricher import ContactEnricher
 from contact_scorer import ContactScorer
+from database_manager import DatabaseManager
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -52,6 +53,7 @@ class GoogleMapsScraperPro:
         self.google_sheet = None
         self.enricher = ContactEnricher()
         self.scorer = ContactScorer()
+        self.db = DatabaseManager()  # Base de données pour le cache
         self.min_score = min_score
 
         self._init_google_sheets()
@@ -182,7 +184,7 @@ class GoogleMapsScraperPro:
 
     def enrich_and_score(self, raw_results: List[Dict]) -> List[Dict]:
         """
-        Enrichit et score les résultats
+        Enrichit et score les résultats avec cache intelligent
 
         Args:
             raw_results: Résultats bruts d'Apify
@@ -191,6 +193,8 @@ class GoogleMapsScraperPro:
             Liste enrichie et scorée
         """
         enriched_contacts = []
+        cache_hits = 0
+        new_enrichments = 0
 
         print(f"\n🔄 Phase d'enrichissement intelligent ({len(raw_results)} entreprises)")
         print("="*60)
@@ -211,30 +215,59 @@ class GoogleMapsScraperPro:
                 'url': result.get('url', ''),
             }
 
-            # Enrichissement
-            enriched = self.enricher.enrich_contact(
+            # Vérifier le cache d'abord
+            company_id = self.db.company_exists(
                 company_name,
                 base_data['website'],
-                base_data['address']
+                base_data['url']
             )
 
-            # Fusionner les données
-            full_data = {**base_data, **enriched}
+            if company_id:
+                # Utiliser les données du cache
+                print(f"  💾 Données trouvées en cache (évite l'enrichissement)")
+                cached_data = self.db.get_company_data(company_id)
 
-            # Scoring
-            scoring = self.scorer.score_contact(full_data)
-            full_data.update(scoring)
+                # Mettre à jour avec les données fraîches de Google Maps
+                full_data = {**cached_data, **base_data}
+                cache_hits += 1
+            else:
+                # Enrichissement depuis zéro
+                print(f"  🔍 Enrichissement en cours...")
+                enriched = self.enricher.enrich_contact(
+                    company_name,
+                    base_data['website'],
+                    base_data['address']
+                )
+
+                # Fusionner les données
+                full_data = {**base_data, **enriched}
+
+                # Scoring
+                scoring = self.scorer.score_contact(full_data)
+                full_data.update(scoring)
+
+                # Sauvegarder dans la base
+                company_id = self.db.save_company(full_data)
+                new_enrichments += 1
+
+            # Afficher le résultat
+            print(f"  {full_data.get('emoji', '⚪')} Score: {full_data.get('score_total', 0)}/100 - {full_data.get('category', 'N/A')}")
+            print(f"  📧 Email: {full_data.get('contact_email', 'N/A')} ({full_data.get('email_confidence', 'none')})")
+            print(f"  👤 Contact: {full_data.get('contact_name', 'N/A')} - {full_data.get('contact_position', 'N/A')}")
 
             # Ajouter à la liste
             enriched_contacts.append(full_data)
 
-            # Afficher le résultat
-            print(f"  {scoring['emoji']} Score: {scoring['score_total']}/100 - {scoring['category']}")
-            print(f"  📧 Email: {full_data.get('contact_email', 'N/A')} ({full_data.get('email_confidence', 'none')})")
-            print(f"  👤 Contact: {full_data.get('contact_name', 'N/A')} - {full_data.get('contact_position', 'N/A')}")
-
         print("\n" + "="*60)
         print("✅ Enrichissement terminé")
+        print(f"   💾 Cache: {cache_hits} entreprises")
+        print(f"   🔍 Nouvelles: {new_enrichments} entreprises")
+
+        # Afficher stats de la DB
+        db_stats = self.db.get_stats()
+        print(f"\n📊 Base de données totale:")
+        print(f"   Entreprises: {db_stats['total_companies']}")
+        print(f"   Avec emails: {db_stats['companies_with_email']}")
 
         return enriched_contacts
 
