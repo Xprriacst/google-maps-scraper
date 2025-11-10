@@ -17,6 +17,7 @@ import json
 from contact_enricher import ContactEnricher
 from contact_scorer import ContactScorer
 from database_manager import DatabaseManager
+from utils import get_env
 
 # Charger les variables d'environnement
 load_dotenv()
