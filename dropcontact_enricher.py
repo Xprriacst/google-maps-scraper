@@ -13,18 +13,34 @@ from utils import get_env
 class DropcontactEnricher:
     """Enrichit les contacts d'entreprises via l'API Dropcontact"""
 
-    # Titres de décideurs recherchés (par ordre de priorité)
-    DECISION_MAKER_ROLES = [
-        'Sales Director',
-        'Commercial Director',
+    # Titres pour TPE/PME (0-250 employés) - Priorité au dirigeant
+    ROLES_TPE_PME = [
         'CEO',
         'Managing Director',
         'General Manager',
-        'Business Development Director',
-        'Marketing Director',
         'Founder',
         'President',
-        'Owner'
+        'Owner',
+        'Gérant',
+        'Directeur Général',
+        'Sales Director',
+        'Commercial Director'
+    ]
+
+    # Titres pour ETI/GE (250+ employés) - Priorité aux fonctions opérationnelles
+    ROLES_ETI_GE = [
+        'Sales Director',
+        'Commercial Director',
+        'Purchasing Director',
+        'Procurement Director',
+        'Business Development Director',
+        'Head of Sales',
+        'Head of Purchasing',
+        'Directeur Commercial',
+        'Directeur Achats',
+        'Directeur Développement',
+        'Marketing Director',
+        'Head of Marketing'
     ]
 
     # Niveaux de séniorité recherchés
@@ -61,21 +77,66 @@ class DropcontactEnricher:
             'errors': 0
         }
 
+    def _get_company_size_category(self, employees: int) -> str:
+        """
+        Détermine la catégorie de taille de l'entreprise
+
+        Args:
+            employees: Nombre d'employés
+
+        Returns:
+            Catégorie: 'TPE', 'PME', 'ETI', 'GE'
+        """
+        if employees <= 10:
+            return 'TPE'
+        elif employees <= 250:
+            return 'PME'
+        elif employees <= 5000:
+            return 'ETI'
+        else:
+            return 'GE'
+
+    def _get_target_roles(self, employees: int) -> List[str]:
+        """
+        Retourne les rôles à cibler selon la taille de l'entreprise
+
+        Args:
+            employees: Nombre d'employés
+
+        Returns:
+            Liste des rôles prioritaires
+        """
+        category = self._get_company_size_category(employees)
+
+        if category in ['TPE', 'PME']:
+            return self.ROLES_TPE_PME
+        else:  # ETI ou GE
+            return self.ROLES_ETI_GE
+
     def enrich_contact(self, company_name: str, website: str = None,
-                       company_siret: str = None, find_role: str = None) -> Dict:
+                       company_siret: str = None, employees: int = 0) -> Dict:
         """
         Enrichit un contact d'entreprise via Dropcontact
+        Adapte automatiquement la recherche selon la taille de l'entreprise
 
         Args:
             company_name: Nom de l'entreprise
             website: Site web de l'entreprise
             company_siret: SIRET de l'entreprise (optionnel, améliore la précision)
-            find_role: Rôle spécifique recherché (ex: "Sales Director")
+            employees: Nombre d'employés (pour adapter les rôles recherchés)
 
         Returns:
             Dict avec les données enrichies du contact décideur
         """
-        print(f"  🔍 Dropcontact: Recherche décideur pour {company_name[:40]}...")
+        # Déterminer la catégorie et les rôles cibles
+        category = self._get_company_size_category(employees) if employees > 0 else 'PME'
+        target_roles = self._get_target_roles(employees) if employees > 0 else self.ROLES_TPE_PME
+
+        # Message adapté selon la taille
+        if category in ['TPE', 'PME']:
+            print(f"  🔍 Dropcontact: Recherche dirigeant pour {company_name[:40]} ({category})...")
+        else:
+            print(f"  🔍 Dropcontact: Recherche contact opérationnel pour {company_name[:40]} ({category})...")
 
         # Préparer la requête
         data = {
@@ -123,8 +184,8 @@ class DropcontactEnricher:
                 self.stats['no_contact'] += 1
                 return self._empty_result()
 
-            # Extraire le meilleur décideur
-            contact = self._extract_best_contact(enriched_data)
+            # Extraire le meilleur décideur avec les rôles ciblés
+            contact = self._extract_best_contact(enriched_data, target_roles)
 
             if contact['contact_name']:
                 print(f"  ✅ Contact trouvé: {contact['contact_name']} ({contact['contact_position']})")
@@ -185,16 +246,19 @@ class DropcontactEnricher:
         print(f"  ⚠️  Timeout lors de l'attente du résultat")
         return None
 
-    def _extract_best_contact(self, data: Dict) -> Dict:
+    def _extract_best_contact(self, data: Dict, target_roles: List[str] = None) -> Dict:
         """
         Extrait le meilleur contact décideur des résultats Dropcontact
 
         Args:
             data: Données enrichies de Dropcontact
+            target_roles: Liste des rôles à prioriser (par défaut: ROLES_TPE_PME)
 
         Returns:
             Dict avec les infos du meilleur contact
         """
+        if target_roles is None:
+            target_roles = self.ROLES_TPE_PME
         result = {
             'contact_name': '',
             'contact_position': '',
@@ -223,12 +287,12 @@ class DropcontactEnricher:
             if not email or '@' not in email:
                 continue
 
-            # Score basé sur le poste
+            # Score basé sur le poste (utilise les rôles ciblés selon la taille)
             job_lower = job_title.lower()
 
-            for idx, role in enumerate(self.DECISION_MAKER_ROLES):
+            for idx, role in enumerate(target_roles):
                 if role.lower() in job_lower:
-                    score += (len(self.DECISION_MAKER_ROLES) - idx) * 10
+                    score += (len(target_roles) - idx) * 10
                     break
 
             # Score basé sur les mots-clés

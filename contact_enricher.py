@@ -668,15 +668,26 @@ class ContactEnricher:
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
 
-        # 2. Chercher le décideur commercial avec Dropcontact
+        # 2. Chercher le décideur avec Dropcontact (adapté selon la taille)
         if self.use_dropcontact and self.dropcontact:
-            print("  🎯 Étape 2/2: Dropcontact (décideur commercial)...")
+            # Parser le nombre d'employés
+            employees_count = 0
+            if enriched['employees']:
+                try:
+                    # Extraire le nombre (peut être "50" ou "10-20" ou "50-100")
+                    employees_str = str(enriched['employees']).split('-')[0].strip()
+                    employees_count = int(employees_str) if employees_str.isdigit() else 0
+                except:
+                    employees_count = 0
+
+            print("  🎯 Étape 2/2: Dropcontact (recherche adaptée)...")
 
             try:
                 dropcontact_result = self.dropcontact.enrich_contact(
                     company_name=company_name,
                     website=website,
-                    company_siret=enriched['siret']
+                    company_siret=enriched['siret'],
+                    employees=employees_count
                 )
 
                 # Si Dropcontact a trouvé un contact

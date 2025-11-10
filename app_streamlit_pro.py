@@ -382,6 +382,27 @@ def render_contacts_table(contacts):
         else:
             return '🔍 Autre source'
 
+    # Fonction pour déterminer la taille de l'entreprise
+    def get_company_size(contact):
+        """Détermine la catégorie de taille de l'entreprise"""
+        employees_str = str(contact.get('employees', ''))
+        if not employees_str or employees_str == 'N/A':
+            return '❓ Inconnu'
+
+        try:
+            # Extraire le nombre (peut être "50" ou "10-20")
+            employees = int(employees_str.split('-')[0].strip())
+            if employees <= 10:
+                return '🏪 TPE (≤10)'
+            elif employees <= 250:
+                return '🏢 PME (11-250)'
+            elif employees <= 5000:
+                return '🏭 ETI (251-5000)'
+            else:
+                return '🏰 GE (5000+)'
+        except:
+            return '❓ Inconnu'
+
     # Filtres
     col1, col2, col3, col4 = st.columns(4)
 
@@ -440,6 +461,7 @@ def render_contacts_table(contacts):
             'Score': f"{c.get('score_total', 0)} {c.get('emoji', '')}",
             'Catégorie': c.get('category', ''),
             'Source Contact': get_contact_source(c),
+            'Taille': get_company_size(c),
             'Entreprise': c.get('name', ''),
             'Contact': c.get('contact_name', '').strip() if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
             'Fonction': c.get('contact_position', '').strip() if c.get('contact_position', '').strip() else '-',
@@ -449,6 +471,7 @@ def render_contacts_table(contacts):
             'Site web': c.get('website', 'N/A'),
             'Note': f"{c.get('rating', 'N/A')} ⭐",
             'Avis': c.get('reviews_count', 'N/A'),
+            'Effectifs': c.get('employees', 'N/A'),
             'SIRET': c.get('siret', 'N/A'),
         }
         for c in filtered_contacts
