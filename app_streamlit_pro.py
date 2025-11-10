@@ -182,25 +182,57 @@ def render_sidebar():
         help="Adapte le type de contact recherché selon la taille de l'entreprise (CEO pour TPE/PME, directeurs opérationnels pour ETI/GE)"
     )
 
-    target_role = None
+    custom_job_titles = []
     if not use_adaptive_targeting:
-        target_role = st.sidebar.selectbox(
-            "Type de contact recherché",
-            options=[
-                "Dirigeant (CEO, Gérant, Président)",
-                "Direction commerciale",
-                "Direction achats",
-                "Direction marketing",
-                "Direction des opérations",
-                "Direction technique",
-                "Direction financière"
-            ],
-            help="Rechercher systématiquement ce type de contact, quelle que soit la taille de l'entreprise"
+        st.sidebar.caption("**Entrez les job titles recherchés** (un par ligne)")
+
+        # Exemples de job titles
+        with st.sidebar.expander("💡 Exemples de job titles", expanded=False):
+            st.markdown("""
+            **Dirigeants:**
+            - CEO, Managing Director
+            - Founder, Co-Founder
+            - President, Président
+            - Gérant, Directeur Général
+
+            **Commercial:**
+            - Sales Director
+            - Business Development Director
+            - Commercial Director
+            - VP Sales
+
+            **Achats:**
+            - Purchasing Director
+            - Procurement Manager
+            - Head of Purchasing
+
+            **Technique:**
+            - CTO, Technical Director
+            - VP Engineering
+            - Head of Technology
+            """)
+
+        job_titles_input = st.sidebar.text_area(
+            "Job titles (un par ligne)",
+            value="CEO\nManaging Director\nGérant\nDirecteur Général",
+            height=150,
+            help="Entrez les intitulés de postes recherchés, un par ligne. Exemple: CEO, Sales Director, Purchasing Manager..."
         )
+
+        # Parser les job titles
+        if job_titles_input:
+            custom_job_titles = [
+                title.strip()
+                for title in job_titles_input.split('\n')
+                if title.strip()
+            ]
+
+            if custom_job_titles:
+                st.sidebar.success(f"✅ {len(custom_job_titles)} job title(s) configuré(s)")
 
     # Stocker dans session state
     st.session_state.use_adaptive_targeting = use_adaptive_targeting
-    st.session_state.target_role = target_role
+    st.session_state.custom_job_titles = custom_job_titles
 
     st.sidebar.markdown("---")
 
@@ -272,12 +304,12 @@ def run_prospection(search_query, max_results):
 
             # Récupérer les paramètres de ciblage
             use_adaptive = st.session_state.get('use_adaptive_targeting', True)
-            target_role = st.session_state.get('target_role', None)
+            custom_job_titles = st.session_state.get('custom_job_titles', [])
 
             scraper = GoogleMapsScraperPro(
                 min_score=0,
                 use_adaptive_targeting=use_adaptive,
-                target_role=target_role
+                custom_job_titles=custom_job_titles
             )
 
             # Phase 2: Scraping
@@ -590,6 +622,7 @@ def render_contacts_table(contacts):
             'Avis': c.get('reviews_count', 'N/A'),
             'Effectifs': c.get('employees', 'N/A'),
             'SIRET': c.get('siret', 'N/A'),
+            'Logs': ' | '.join(c.get('enrichment_logs', [])) if c.get('enrichment_logs') else 'Aucun log',
         }
         for c in filtered_contacts
     ])

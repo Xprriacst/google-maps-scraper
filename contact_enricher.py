@@ -55,7 +55,7 @@ class ContactEnricher:
     ]
 
     def __init__(self, use_dropcontact: bool = True, use_apollo: bool = True,
-                 use_adaptive_targeting: bool = True, target_role: str = None):
+                 use_adaptive_targeting: bool = True, custom_job_titles: List[str] = None):
         """
         Initialise l'enrichisseur de contacts
 
@@ -63,10 +63,10 @@ class ContactEnricher:
             use_dropcontact: Utiliser Dropcontact pour l'enrichissement (défaut: True)
             use_apollo: Utiliser Apollo.io pour l'enrichissement (défaut: True, prioritaire)
             use_adaptive_targeting: Adapter le ciblage selon la taille de l'entreprise (défaut: True)
-            target_role: Type de contact forcé si adaptive désactivé (ex: "Dirigeant", "Direction commerciale")
+            custom_job_titles: Liste personnalisée de job titles si ciblage manuel (ex: ["CEO", "Sales Director"])
         """
         self.use_adaptive_targeting = use_adaptive_targeting
-        self.target_role = target_role
+        self.custom_job_titles = custom_job_titles or []
 
         self.session = requests.Session()
         self.session.headers.update({
@@ -155,51 +155,6 @@ class ContactEnricher:
         except Exception as e:
             print(f"⚠️  Impossible d'initialiser le scraping web: {e}")
             self.use_website_scraping = False
-
-    def _get_job_titles_for_role(self, role_type: str) -> List[str]:
-        """
-        Convertit un type de rôle UI en liste de job titles pour Apollo/Dropcontact
-
-        Args:
-            role_type: Type de rôle depuis l'UI (ex: "Dirigeant (CEO, Gérant, Président)")
-
-        Returns:
-            Liste de job titles à rechercher
-        """
-        role_mapping = {
-            "Dirigeant (CEO, Gérant, Président)": [
-                "CEO", "Managing Director", "Founder", "President", "Gérant", "Directeur Général",
-                "Co-Founder", "Owner", "Propriétaire", "Chief Executive Officer"
-            ],
-            "Direction commerciale": [
-                "Sales Director", "Chief Sales Officer", "VP Sales", "Directeur Commercial",
-                "Sales Manager", "Business Development Director", "Head of Sales"
-            ],
-            "Direction achats": [
-                "Purchasing Director", "Chief Procurement Officer", "VP Procurement",
-                "Directeur Achats", "Procurement Manager", "Head of Purchasing"
-            ],
-            "Direction marketing": [
-                "Marketing Director", "Chief Marketing Officer", "VP Marketing",
-                "Directeur Marketing", "Marketing Manager", "Head of Marketing"
-            ],
-            "Direction des opérations": [
-                "Operations Director", "Chief Operating Officer", "VP Operations",
-                "Directeur des Opérations", "Operations Manager", "COO"
-            ],
-            "Direction technique": [
-                "CTO", "Chief Technology Officer", "VP Engineering", "Directeur Technique",
-                "Technical Director", "Head of Engineering"
-            ],
-            "Direction financière": [
-                "CFO", "Chief Financial Officer", "Finance Director", "Directeur Financier",
-                "VP Finance", "Head of Finance"
-            ]
-        }
-
-        return role_mapping.get(role_type, [
-            "CEO", "Managing Director", "Founder", "President", "Gérant"
-        ])
 
     def extract_domain(self, website: str) -> Optional[str]:
         """
@@ -772,7 +727,8 @@ class ContactEnricher:
 
             # Métadonnées
             'enrichment_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'data_sources': []
+            'data_sources': [],
+            'enrichment_logs': []  # Logs d'enrichissement
         }
 
         # 1. PRIORITÉ: Enrichir avec Apollo.io (meilleure base de données B2B)
@@ -787,10 +743,13 @@ class ContactEnricher:
                     enriched['revenue'] = apollo_org_data.get('revenue', '')
                     enriched['legal_form'] = apollo_org_data.get('industry', '')
                     enriched['data_sources'].extend(apollo_org_data.get('data_sources', []))
+                    enriched['enrichment_logs'].append(f"✅ Apollo org: {apollo_org_data.get('employees', 0)} employés")
                 else:
                     print("  ⚠️  Apollo: Aucune donnée entreprise trouvée, fallback sur API gouv")
+                    enriched['enrichment_logs'].append("⚠️ Apollo org: Aucune donnée")
             except Exception as e:
                 print(f"  ⚠️  Erreur Apollo: {e}")
+                enriched['enrichment_logs'].append(f"❌ Apollo org: {str(e)[:50]}")
 
         # 1.5 FALLBACK: API entreprise.data.gouv.fr (toujours appeler pour SIRET)
         print("  📊 Étape 1.5/3: API entreprise.data.gouv.fr (SIRET)...")
@@ -809,6 +768,9 @@ class ContactEnricher:
 
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
+            enriched['enrichment_logs'].append(f"✅ API gouv: SIRET {enriched['siret'][:8]}...")
+        else:
+            enriched['enrichment_logs'].append("⚠️ API gouv: Aucune donnée")
 
         # 1.6 FALLBACK IA: Estimer la taille si toujours inconnue
         if not enriched.get('employees') and self.use_ai_estimation and self.size_estimator:
@@ -823,9 +785,13 @@ class ContactEnricher:
                 if ai_result and ai_result.get('employees_estimated', 0) > 0:
                     enriched['employees'] = str(ai_result['employees_estimated'])
                     enriched['data_sources'].append('ai_estimated')
+                    enriched['enrichment_logs'].append(f"🤖 IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
                     print(f"  ✅ Taille estimée par IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ IA: Aucune estimation")
             except Exception as e:
                 print(f"  ⚠️  Erreur estimation IA: {e}")
+                enriched['enrichment_logs'].append(f"❌ IA: {str(e)[:50]}")
 
         # 2. Parser le nombre d'employés pour ciblage adaptatif
         employees_count = 0
@@ -851,9 +817,9 @@ class ContactEnricher:
                         job_titles = ["Sales Director", "Business Development", "Purchasing Director", "Marketing Director"]
                         print(f"     🎯 Ciblage adaptatif: Directeurs opérationnels (ETI/GE)")
                 else:
-                    # Ciblage manuel selon le choix utilisateur
-                    job_titles = self._get_job_titles_for_role(self.target_role)
-                    print(f"     🎯 Ciblage manuel: {self.target_role}")
+                    # Ciblage manuel avec les job titles personnalisés
+                    job_titles = self.custom_job_titles
+                    print(f"     🎯 Ciblage manuel: {len(job_titles)} job title(s) personnalisé(s)")
 
                 apollo_contacts = self.apollo.search_people(
                     company_name=company_name,
@@ -881,8 +847,12 @@ class ContactEnricher:
                     enriched['email_confidence'] = 'high' if apollo_contacts[0].get('email_status') == 'verified' else 'medium'
                     enriched['data_sources'].append('apollo')
                     contacts_found = True
+                    enriched['enrichment_logs'].append(f"✅ Apollo contacts: {len(apollo_contacts)} contact(s)")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ Apollo contacts: Aucun contact")
             except Exception as e:
                 print(f"  ⚠️  Erreur Apollo contacts: {e}")
+                enriched['enrichment_logs'].append(f"❌ Apollo contacts: {str(e)[:50]}")
 
         # 2.2 FALLBACK: Dropcontact si Apollo n'a pas trouvé de contacts
         if not contacts_found and self.use_dropcontact and self.dropcontact:
@@ -891,9 +861,9 @@ class ContactEnricher:
             try:
                 # Déterminer les rôles cibles pour Dropcontact
                 force_roles = None
-                if not self.use_adaptive_targeting and self.target_role:
-                    # Ciblage manuel: utiliser les job titles du rôle choisi
-                    force_roles = self._get_job_titles_for_role(self.target_role)
+                if not self.use_adaptive_targeting and self.custom_job_titles:
+                    # Ciblage manuel: utiliser les job titles personnalisés
+                    force_roles = self.custom_job_titles
 
                 dropcontact_result = self.dropcontact.enrich_contact(
                     company_name=company_name,
@@ -913,9 +883,13 @@ class ContactEnricher:
 
                 if dropcontact_result.get('contact_name'):
                     contacts_found = True
+                    enriched['enrichment_logs'].append(f"✅ Dropcontact: Contact trouvé")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ Dropcontact: Aucun contact")
 
             except Exception as e:
                 print(f"  ⚠️  Erreur Dropcontact: {e}")
+                enriched['enrichment_logs'].append(f"❌ Dropcontact: {str(e)[:50]}")
 
         # 2.3 SCRAPING WEB: Extraire emails directement du site si aucun contact trouvé
         if not contacts_found and website and self.use_website_scraping and self.website_scraper:
@@ -949,10 +923,14 @@ class ContactEnricher:
                                 enriched[f'contact_{i}_name'] = scraping_result['contact_names'][i-1]
 
                     contacts_found = True
+                    enriched['enrichment_logs'].append(f"✅ Web scraping: {len(scraping_result['all_emails_scored'])} email(s)")
                     print(f"  ✅ Email trouvé par scraping web: {best_email}")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ Web scraping: Aucun email")
 
             except Exception as e:
                 print(f"  ⚠️  Erreur scraping web: {e}")
+                enriched['enrichment_logs'].append(f"❌ Web scraping: {str(e)[:50]}")
 
         # 3. Fallback: utiliser le dirigeant légal si aucun contact trouvé
         if not enriched['contact_name'] and api_data['legal_manager']:
@@ -960,6 +938,7 @@ class ContactEnricher:
             enriched['contact_name'] = api_data['legal_manager']
             enriched['contact_position'] = api_data['legal_manager_position'] or 'Gérant'
             enriched['data_sources'].append('legal_data')
+            enriched['enrichment_logs'].append(f"🔄 Fallback: Dirigeant légal ({api_data['legal_manager']})")
 
             # Construire l'email (non vérifié)
             if website:
