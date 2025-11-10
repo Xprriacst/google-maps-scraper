@@ -291,23 +291,29 @@ def run_prospection(search_query, max_results, min_score):
         finally:
             st.session_state.running = False
 
-def render_statistics(stats):
+def render_statistics(stats, enriched_contacts):
     """Affiche les statistiques sous forme de métriques"""
     st.subheader("📊 Statistiques globales")
 
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    # Calculer le nombre d'entreprises avec/sans contact
+    contacts_found = sum(1 for c in enriched_contacts if c.get('contact_name', '').strip())
+    no_contacts = len(enriched_contacts) - contacts_found
+
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
 
     with col1:
         st.metric("Total scrapé", stats['total'])
     with col2:
-        st.metric("🟢 Premium", stats['premium'], f"{stats['premium_pct']}%")
+        st.metric("✅ Avec contact", contacts_found, f"{contacts_found/stats['total']*100:.0f}%")
     with col3:
-        st.metric("🟡 Qualifiés", stats['qualified'], f"{stats['qualified_pct']}%")
+        st.metric("❌ Sans contact", no_contacts, f"{no_contacts/stats['total']*100:.0f}%")
     with col4:
-        st.metric("🟠 À vérifier", stats['verify'])
+        st.metric("🟢 Premium", stats['premium'], f"{stats['premium_pct']}%")
     with col5:
-        st.metric("🔴 Faibles", stats['weak'])
+        st.metric("🟡 Qualifiés", stats['qualified'], f"{stats['qualified_pct']}%")
     with col6:
+        st.metric("🟠 À vérifier", stats['verify'])
+    with col7:
         st.metric("Score moyen", f"{stats['avg_score']}/100")
 
 def render_charts(enriched_contacts):
@@ -404,11 +410,12 @@ def render_contacts_table(contacts):
         {
             'Score': f"{c.get('score_total', 0)} {c.get('emoji', '')}",
             'Catégorie': c.get('category', ''),
+            'Statut Contact': '✅ Contact trouvé' if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
             'Entreprise': c.get('name', ''),
-            'Contact': c.get('contact_name', 'N/A'),
-            'Fonction': c.get('contact_position', 'N/A'),
-            'Email': c.get('contact_email', 'N/A'),
-            'Confiance': c.get('email_confidence', 'none').upper(),
+            'Contact': c.get('contact_name', '').strip() if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
+            'Fonction': c.get('contact_position', '').strip() if c.get('contact_position', '').strip() else '-',
+            'Email': c.get('contact_email', '').strip() if c.get('contact_email', '').strip() else '-',
+            'Confiance': c.get('email_confidence', 'none').upper() if c.get('contact_email', '').strip() else '-',
             'Téléphone': c.get('phone', 'N/A'),
             'Site web': c.get('website', 'N/A'),
             'Note': f"{c.get('rating', 'N/A')} ⭐",
@@ -459,7 +466,7 @@ def main():
         tab1, tab2, tab3 = st.tabs(["📊 Statistiques", "📋 Toutes les entreprises", "📈 Graphiques"])
 
         with tab1:
-            render_statistics(results['stats'])
+            render_statistics(results['stats'], results['enriched'])
 
             # Breakdown détaillé
             st.markdown("---")

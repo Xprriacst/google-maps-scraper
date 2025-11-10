@@ -686,7 +686,15 @@ class ContactEnricher:
             enriched['contact_email'] = email_result['email']
             enriched['email_confidence'] = email_result['confidence']
 
-        print(f"  ✅ Enrichissement terminé - Sources: {', '.join(enriched['data_sources'])}")
+        # Message récapitulatif
+        if enriched['contact_name']:
+            print(f"  ✅ Contact trouvé: {enriched['contact_name']} ({enriched['contact_position']})")
+            print(f"     Email: {enriched['contact_email']} (confiance: {enriched['email_confidence']})")
+            print(f"     Sources: {', '.join(enriched['data_sources'])}")
+        else:
+            print(f"  ❌ Aucun contact trouvé pour cette entreprise")
+            if enriched['data_sources']:
+                print(f"     Données entreprise: {', '.join(enriched['data_sources'])}")
 
         return enriched
 
