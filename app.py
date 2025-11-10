@@ -7,11 +7,12 @@ from scraper import GoogleMapsScraper
 from scraper_pro import GoogleMapsScraperPro
 
 
-def run_scraper(search_query: str, max_results: int, mode: str = 'simple', min_score: int = 70) -> None:
+def run_scraper(search_query: str, max_results: int, mode: str = 'simple',
+                min_score: int = 70, use_adaptive_targeting: bool = True) -> None:
     """Exécute le scraper avec les paramètres fournis."""
 
     if mode == 'pro':
-        scraper = GoogleMapsScraperPro(min_score=min_score)
+        scraper = GoogleMapsScraperPro(min_score=min_score, use_adaptive_targeting=use_adaptive_targeting)
     else:
         scraper = GoogleMapsScraper()
 
@@ -59,8 +60,10 @@ def main() -> None:
             step=10
         )
 
-        # Score minimum uniquement en mode PRO
+        # Options Mode PRO
         min_score = 70
+        use_adaptive_targeting = True
+
         if mode == 'pro':
             min_score = st.slider(
                 "Score minimum (qualification)",
@@ -69,6 +72,12 @@ def main() -> None:
                 value=70,
                 step=5,
                 help="Filtrer les entreprises avec un score ≥ à cette valeur"
+            )
+
+            use_adaptive_targeting = st.checkbox(
+                "🎯 Cibler uniquement les décideurs (CEO, Directeurs, etc.)",
+                value=True,
+                help="Si décoché, trouve TOUS les contacts de l'équipe, peu importe leur poste"
             )
 
         # Bouton selon le mode
@@ -86,7 +95,7 @@ def main() -> None:
 
         with st.spinner(spinner_text):
             try:
-                run_scraper(search_query, max_results, mode, min_score)
+                run_scraper(search_query, max_results, mode, min_score, use_adaptive_targeting)
                 if mode == 'pro':
                     st.success("✅ Scraping PRO terminé ! Consultez l'onglet 'Prospection' dans Google Sheets.")
                 else:
