@@ -39,3 +39,9 @@ token.json
 
 # Logs
 *.log
+
+# Database cache
+*.db
+*.sqlite
+*.sqlite3
+contacts_cache.db

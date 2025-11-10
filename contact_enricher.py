@@ -690,7 +690,15 @@ class ContactEnricher:
         print(f"\n🔍 Enrichissement: {company_name}")
 
         enriched = {
-            # Contact principal (compatibilité)
+            # Contact 1: Email générique (pattern)
+            'email_generated': '',
+            'email_generated_confidence': 'low',
+
+            # Contact 2: Email scrapé sur site
+            'email_scraped': '',
+            'email_scraped_confidence': '',
+
+            # Contact 3: Décideur (Pro)
             'contact_name': '',
             'contact_position': '',
             'contact_email': '',
@@ -731,28 +739,55 @@ class ContactEnricher:
             'enrichment_logs': []  # Logs d'enrichissement
         }
 
-        # 1. PRIORITÉ: Enrichir avec Apollo.io (meilleure base de données B2B)
-        apollo_org_data = None
-        if self.use_apollo and self.apollo:
-            print("  🚀 Étape 1/3: Apollo.io (enrichissement entreprise)...")
-            try:
-                apollo_org_data = self.apollo.enrich_organization(company_name, website)
+        # 0. Générer les emails génériques et scrapés (Contacts 1 & 2)
+        from email_finder import EmailFinder
+        email_finder = EmailFinder()
+        basic_emails = email_finder.find_contact_email(company_name, website)
 
-                if apollo_org_data and apollo_org_data.get('company_name'):
-                    enriched['employees'] = str(apollo_org_data.get('employees', ''))
-                    enriched['revenue'] = apollo_org_data.get('revenue', '')
-                    enriched['legal_form'] = apollo_org_data.get('industry', '')
-                    enriched['data_sources'].extend(apollo_org_data.get('data_sources', []))
-                    enriched['enrichment_logs'].append(f"✅ Apollo org: {apollo_org_data.get('employees', 0)} employés")
-                else:
-                    print("  ⚠️  Apollo: Aucune donnée entreprise trouvée, fallback sur API gouv")
-                    enriched['enrichment_logs'].append("⚠️ Apollo org: Aucune donnée")
-            except Exception as e:
-                print(f"  ⚠️  Erreur Apollo: {e}")
-                enriched['enrichment_logs'].append(f"❌ Apollo org: {str(e)[:50]}")
+        enriched['email_generated'] = basic_emails.get('email_generated', '')
+        enriched['email_generated_confidence'] = basic_emails.get('email_generated_confidence', 'low')
+        enriched['email_scraped'] = basic_emails.get('email_scraped', '')
+        enriched['email_scraped_confidence'] = basic_emails.get('email_scraped_confidence', '')
 
-        # 1.5 FALLBACK: API entreprise.data.gouv.fr (toujours appeler pour SIRET)
-        print("  📊 Étape 1.5/3: API entreprise.data.gouv.fr (SIRET)...")
+        if enriched['email_generated']:
+            enriched['data_sources'].append('email_generated')
+        if enriched['email_scraped']:
+            enriched['data_sources'].append('email_scraped')
+
+        # 1. Chercher l'équipe sur le site web (Contact 3 - Décideur)
+        team = self.extract_team_from_website(website, company_name)
+
+        if team:
+            # Prendre le décideur le plus haut placé
+            decision_maker = team[0]
+            enriched['contact_name'] = decision_maker['name']
+            enriched['contact_position'] = decision_maker['position']
+            enriched['data_sources'].append('website_team')
+
+            # 2. Construire l'email du décideur à partir du nom
+            # Scraper le site pour trouver des emails et détecter le pattern
+            found_emails = email_finder.scrape_website_for_emails(website)
+
+            # Construire l'email du décideur
+            email_result = self.build_email_from_name(
+                decision_maker['name'],
+                website,
+                found_emails
+            )
+
+            enriched['contact_email'] = email_result['email']
+            enriched['email_confidence'] = email_result['confidence']
+
+            if email_result['confidence'] in ['high', 'medium']:
+                enriched['data_sources'].append('email_constructed')
+
+        # 3. Chercher sur LinkedIn (TODO: implémenter avec API)
+        # linkedin_result = self.find_decision_maker_linkedin(company_name)
+        # if linkedin_result['name']:
+        #     enriched['contact_linkedin'] = linkedin_result['linkedin_url']
+        #     enriched['data_sources'].append('linkedin')
+
+        # 4. Enrichir avec les APIs publiques
         api_data = self.enrich_with_api(company_name, website, address)
 
         enriched['siret'] = api_data['siret']
@@ -891,73 +926,25 @@ class ContactEnricher:
                 print(f"  ⚠️  Erreur Dropcontact: {e}")
                 enriched['enrichment_logs'].append(f"❌ Dropcontact: {str(e)[:50]}")
 
-        # 2.3 SCRAPING WEB: Extraire emails directement du site si aucun contact trouvé
-        if not contacts_found and website and self.use_website_scraping and self.website_scraper:
-            print("  🌐 Étape 2.6/3: Scraping du site web...")
-            try:
-                scraping_result = self.website_scraper.scrape_website(website, company_name)
-
-                if scraping_result['success'] and scraping_result.get('best_email'):
-                    best_email, score, reason = scraping_result['best_email']
-
-                    # Essayer de trouver un nom associé
-                    contact_name = ""
-                    if scraping_result['contact_names']:
-                        contact_name = scraping_result['contact_names'][0]
-
-                    # Remplir le contact principal
-                    enriched['contact_name'] = contact_name
-                    enriched['contact_1_name'] = contact_name
-                    enriched['contact_email'] = best_email
-                    enriched['contact_1_email'] = best_email
-                    enriched['email_confidence'] = 'medium' if score > 20 else 'low'
-                    enriched['contact_1_email_confidence'] = enriched['email_confidence']
-                    enriched['data_sources'].append('website_scraping')
-
-                    # Ajouter contacts supplémentaires si disponibles
-                    if len(scraping_result['all_emails_scored']) > 1:
-                        for i, (email, sc, rs) in enumerate(scraping_result['all_emails_scored'][1:3], 2):
-                            enriched[f'contact_{i}_email'] = email
-                            enriched[f'contact_{i}_email_confidence'] = 'medium' if sc > 20 else 'low'
-                            if i <= len(scraping_result['contact_names']):
-                                enriched[f'contact_{i}_name'] = scraping_result['contact_names'][i-1]
-
-                    contacts_found = True
-                    enriched['enrichment_logs'].append(f"✅ Web scraping: {len(scraping_result['all_emails_scored'])} email(s)")
-                    print(f"  ✅ Email trouvé par scraping web: {best_email}")
-                else:
-                    enriched['enrichment_logs'].append("⚠️ Web scraping: Aucun email")
-
-            except Exception as e:
-                print(f"  ⚠️  Erreur scraping web: {e}")
-                enriched['enrichment_logs'].append(f"❌ Web scraping: {str(e)[:50]}")
-
-        # 3. Fallback: utiliser le dirigeant légal si aucun contact trouvé
+        # Si on n'a pas trouvé de contact sur le site, utiliser le dirigeant légal (Contact 3)
         if not enriched['contact_name'] and api_data['legal_manager']:
             print("  🔄 Fallback: Utilisation du dirigeant légal...")
             enriched['contact_name'] = api_data['legal_manager']
             enriched['contact_position'] = api_data['legal_manager_position'] or 'Gérant'
             enriched['data_sources'].append('legal_data')
-            enriched['enrichment_logs'].append(f"🔄 Fallback: Dirigeant légal ({api_data['legal_manager']})")
 
-            # Construire l'email (non vérifié)
-            if website:
-                email_result = self.build_email_from_name(
-                    api_data['legal_manager'],
-                    website
-                )
-                enriched['contact_email'] = email_result['email']
-                enriched['email_confidence'] = email_result['confidence']
+            # Construire l'email du dirigeant
+            email_result = self.build_email_from_name(
+                api_data['legal_manager'],
+                website
+            )
+            enriched['contact_email'] = email_result['email']
+            enriched['email_confidence'] = email_result['confidence']
 
-        # Message récapitulatif
-        if enriched['contact_name']:
-            print(f"  ✅ Contact trouvé: {enriched['contact_name']} ({enriched['contact_position']})")
-            print(f"     Email: {enriched['contact_email']} (confiance: {enriched['email_confidence']})")
-            print(f"     Sources: {', '.join(enriched['data_sources'])}")
-        else:
-            print(f"  ❌ Aucun contact trouvé pour cette entreprise")
-            if enriched['data_sources']:
-                print(f"     Données entreprise: {', '.join(enriched['data_sources'])}")
+        print(f"  ✅ Enrichissement terminé - Sources: {', '.join(enriched['data_sources'])}")
+        print(f"  📧 Contact 1 (Pattern): {enriched['email_generated']} ({enriched['email_generated_confidence']})")
+        print(f"  📧 Contact 2 (Scrapé): {enriched['email_scraped'] or 'N/A'} ({enriched['email_scraped_confidence'] or '-'})")
+        print(f"  📧 Contact 3 (Décideur): {enriched['contact_email'] or 'N/A'} - {enriched['contact_name'] or 'N/A'} ({enriched['email_confidence']})")
 
         return enriched
 

@@ -209,52 +209,77 @@ class EmailFinder:
     
     def find_contact_email(self, company_name, website):
         """
-        Trouve l'email de contact d'une entreprise (méthode complète)
-        
+        Trouve les emails de contact d'une entreprise (3 types)
+
         Args:
             company_name: Nom de l'entreprise
             website: Site web de l'entreprise
-        
+
         Returns:
-            Dict avec email, source et confiance
+            Dict avec 3 types d'emails:
+            - email_generated: Email pattern généré (contact@, info@)
+            - email_scraped: Email trouvé sur le site web
+            - email: Email principal (meilleur trouvé)
         """
         result = {
+            # Contact 1: Email générique généré
+            'email_generated': '',
+            'email_generated_confidence': 'low',
+
+            # Contact 2: Email scrapé sur le site
+            'email_scraped': '',
+            'email_scraped_confidence': '',
+
+            # Email principal (pour compatibilité)
             'email': '',
             'source': '',
             'confidence': 'low'
         }
-        
-        # 1. Essayer de scraper le site web
+
+        # 1. Toujours générer un pattern d'email (Contact 1)
+        patterns = self.generate_email_patterns(company_name, website)
+        if patterns:
+            result['email_generated'] = patterns[0]  # contact@ ou info@
+            result['email_generated_confidence'] = 'low'
+
+        # 2. Essayer de scraper le site web (Contact 2)
         if website:
             print(f"  🔍 Scraping {website[:50]}...")
             scraped_emails = self.scrape_website_for_emails(website)
-            
+
             if scraped_emails:
                 # Prioriser les emails "contact", "info", etc.
                 priority_keywords = ['contact', 'info', 'hello', 'bonjour', 'commercial', 'direction']
-                
+
+                best_scraped = None
                 for keyword in priority_keywords:
                     for email in scraped_emails:
                         if keyword in email.lower():
-                            result['email'] = email
-                            result['source'] = 'scraped_website'
-                            result['confidence'] = 'high'
-                            return result
-                
+                            best_scraped = email
+                            result['email_scraped'] = email
+                            result['email_scraped_confidence'] = 'high'
+                            break
+                    if best_scraped:
+                        break
+
                 # Si aucun email prioritaire, prendre le premier
-                result['email'] = scraped_emails[0]
-                result['source'] = 'scraped_website'
-                result['confidence'] = 'medium'
-                return result
-        
-        # 2. Générer des patterns d'emails
-        patterns = self.generate_email_patterns(company_name, website)
-        
-        if patterns:
-            result['email'] = patterns[0]  # Contact@ est le plus probable
+                if not best_scraped and scraped_emails:
+                    result['email_scraped'] = scraped_emails[0]
+                    result['email_scraped_confidence'] = 'medium'
+
+                # L'email scrapé devient l'email principal
+                if result['email_scraped']:
+                    result['email'] = result['email_scraped']
+                    result['source'] = 'scraped_website'
+                    result['confidence'] = result['email_scraped_confidence']
+                    return result
+
+        # 3. Si rien de scrapé, utiliser le pattern généré comme principal
+        if result['email_generated']:
+            result['email'] = result['email_generated']
             result['source'] = 'generated_pattern'
             result['confidence'] = 'low'
-        
+
         return result
     
     def find_manager_name(self, company_name, website):

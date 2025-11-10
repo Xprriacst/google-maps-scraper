@@ -16,7 +16,7 @@ import json
 
 from contact_enricher import ContactEnricher
 from contact_scorer import ContactScorer
-from utils import get_env, get_gcp_credentials
+from database_manager import DatabaseManager
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -59,6 +59,7 @@ class GoogleMapsScraperPro:
             custom_job_titles=custom_job_titles or []
         )
         self.scorer = ContactScorer()
+        self.db = DatabaseManager()  # Base de données pour le cache
         self.min_score = min_score
 
         self._init_google_sheets()
@@ -96,17 +97,14 @@ class GoogleMapsScraperPro:
             except:
                 worksheet = self.google_sheet.add_worksheet('Prospection', rows=1000, cols=30)
 
-                # Ajouter les en-têtes complets
+                # Ajouter les en-têtes complets (avec 3 types de contacts)
                 headers = [
-                    # Contact
-                    'Nom Contact',
-                    'Fonction',
-                    'Email',
-                    'Confiance Email',
-                    'LinkedIn',
-                    'Téléphone Direct',
+                    # CONTACTS (3 types)
+                    'Email Pattern', 'Conf.',  # Contact 1
+                    'Email Site', 'Conf.',  # Contact 2
+                    'Nom Décideur', 'Fonction', 'Email Décideur', 'Conf.', 'LinkedIn', 'Tél Direct',  # Contact 3
 
-                    # Entreprise
+                    # ENTREPRISE
                     'Nom Entreprise',
                     'SIRET',
                     'Adresse',
@@ -116,14 +114,14 @@ class GoogleMapsScraperPro:
                     'Nb Avis',
                     'Catégorie',
 
-                    # Enrichissement
+                    # ENRICHISSEMENT
                     'SIREN',
                     'Forme Juridique',
                     'CA',
                     'Employés',
                     'Date Création',
 
-                    # Scoring
+                    # SCORING
                     'Score Total (/100)',
                     'Score Email (/40)',
                     'Score Contact (/30)',
@@ -131,7 +129,7 @@ class GoogleMapsScraperPro:
                     'Catégorie',
                     'Priorité',
 
-                    # Métadonnées
+                    # MÉTADONNÉES
                     'Sources Données',
                     'Date Ajout',
                     'Statut',  # À contacter / Contacté / Répondu
@@ -195,7 +193,7 @@ class GoogleMapsScraperPro:
 
     def enrich_and_score(self, raw_results: List[Dict]) -> List[Dict]:
         """
-        Enrichit et score les résultats
+        Enrichit et score les résultats avec cache intelligent
 
         Args:
             raw_results: Résultats bruts d'Apify
@@ -204,6 +202,8 @@ class GoogleMapsScraperPro:
             Liste enrichie et scorée
         """
         enriched_contacts = []
+        cache_hits = 0
+        new_enrichments = 0
 
         print(f"\n🔄 Phase d'enrichissement intelligent ({len(raw_results)} entreprises)")
         print("="*60)
@@ -224,30 +224,59 @@ class GoogleMapsScraperPro:
                 'url': result.get('url', ''),
             }
 
-            # Enrichissement
-            enriched = self.enricher.enrich_contact(
+            # Vérifier le cache d'abord
+            company_id = self.db.company_exists(
                 company_name,
                 base_data['website'],
-                base_data['address']
+                base_data['url']
             )
 
-            # Fusionner les données
-            full_data = {**base_data, **enriched}
+            if company_id:
+                # Utiliser les données du cache
+                print(f"  💾 Données trouvées en cache (évite l'enrichissement)")
+                cached_data = self.db.get_company_data(company_id)
 
-            # Scoring
-            scoring = self.scorer.score_contact(full_data)
-            full_data.update(scoring)
+                # Mettre à jour avec les données fraîches de Google Maps
+                full_data = {**cached_data, **base_data}
+                cache_hits += 1
+            else:
+                # Enrichissement depuis zéro
+                print(f"  🔍 Enrichissement en cours...")
+                enriched = self.enricher.enrich_contact(
+                    company_name,
+                    base_data['website'],
+                    base_data['address']
+                )
+
+                # Fusionner les données
+                full_data = {**base_data, **enriched}
+
+                # Scoring
+                scoring = self.scorer.score_contact(full_data)
+                full_data.update(scoring)
+
+                # Sauvegarder dans la base
+                company_id = self.db.save_company(full_data)
+                new_enrichments += 1
+
+            # Afficher le résultat
+            print(f"  {full_data.get('emoji', '⚪')} Score: {full_data.get('score_total', 0)}/100 - {full_data.get('category', 'N/A')}")
+            print(f"  📧 Email: {full_data.get('contact_email', 'N/A')} ({full_data.get('email_confidence', 'none')})")
+            print(f"  👤 Contact: {full_data.get('contact_name', 'N/A')} - {full_data.get('contact_position', 'N/A')}")
 
             # Ajouter à la liste
             enriched_contacts.append(full_data)
 
-            # Afficher le résultat
-            print(f"  {scoring['emoji']} Score: {scoring['score_total']}/100 - {scoring['category']}")
-            print(f"  📧 Email: {full_data.get('contact_email', 'N/A')} ({full_data.get('email_confidence', 'none')})")
-            print(f"  👤 Contact: {full_data.get('contact_name', 'N/A')} - {full_data.get('contact_position', 'N/A')}")
-
         print("\n" + "="*60)
         print("✅ Enrichissement terminé")
+        print(f"   💾 Cache: {cache_hits} entreprises")
+        print(f"   🔍 Nouvelles: {new_enrichments} entreprises")
+
+        # Afficher stats de la DB
+        db_stats = self.db.get_stats()
+        print(f"\n📊 Base de données totale:")
+        print(f"   Entreprises: {db_stats['total_companies']}")
+        print(f"   Avec emails: {db_stats['companies_with_email']}")
 
         return enriched_contacts
 
@@ -285,58 +314,90 @@ class GoogleMapsScraperPro:
 
             print(f"\n📝 Ajout de {len(contacts)} contacts dans Google Sheets...")
 
-            for contact in contacts:
-                # Préparer les sources de données
-                sources = ', '.join(contact.get('data_sources', []))
+            for idx, contact in enumerate(contacts, 1):
+                try:
+                    # Préparer les sources de données
+                    sources = ', '.join(contact.get('data_sources', []))
 
-                row = [
-                    # Contact
-                    contact.get('contact_name', ''),
-                    contact.get('contact_position', ''),
-                    contact.get('contact_email', ''),
-                    contact.get('email_confidence', '').upper(),
-                    contact.get('contact_linkedin', ''),
-                    contact.get('contact_phone', ''),
+                    row = [
+                        # CONTACTS (3 types)
+                        contact.get('email_generated', ''),  # Contact 1
+                        contact.get('email_generated_confidence', 'low').upper(),
+                        contact.get('email_scraped', ''),  # Contact 2
+                        contact.get('email_scraped_confidence', '').upper(),
+                        contact.get('contact_name', ''),  # Contact 3
+                        contact.get('contact_position', ''),
+                        contact.get('contact_email', ''),
+                        contact.get('email_confidence', '').upper(),
+                        contact.get('contact_linkedin', ''),
+                        contact.get('contact_phone', ''),
 
-                    # Entreprise
-                    contact.get('name', ''),
-                    contact.get('siret', ''),
-                    contact.get('address', ''),
-                    contact.get('phone', ''),
-                    contact.get('website', ''),
-                    contact.get('rating', ''),
-                    contact.get('reviews_count', ''),
-                    contact.get('category', ''),
+                        # ENTREPRISE
+                        contact.get('name', ''),
+                        contact.get('siret', ''),
+                        contact.get('address', ''),
+                        contact.get('phone', ''),
+                        contact.get('website', ''),
+                        contact.get('rating', ''),
+                        contact.get('reviews_count', ''),
+                        contact.get('category', ''),
 
-                    # Enrichissement
-                    contact.get('siren', ''),
-                    contact.get('legal_form', ''),
-                    contact.get('revenue', ''),
-                    contact.get('employees', ''),
-                    contact.get('creation_date', ''),
+                        # ENRICHISSEMENT
+                        contact.get('siren', ''),
+                        contact.get('legal_form', ''),
+                        contact.get('revenue', ''),
+                        contact.get('employees', ''),
+                        contact.get('creation_date', ''),
 
-                    # Scoring
-                    contact.get('score_total', ''),
-                    contact.get('score_email', ''),
-                    contact.get('score_contact', ''),
-                    contact.get('score_company', ''),
-                    f"{contact.get('emoji', '')} {contact.get('category', '')}",
-                    contact.get('priority', ''),
+                        # SCORING
+                        contact.get('score_total', ''),
+                        contact.get('score_email', ''),
+                        contact.get('score_contact', ''),
+                        contact.get('score_company', ''),
+                        f"{contact.get('emoji', '')} {contact.get('category', '')}",
+                        contact.get('priority', ''),
 
-                    # Métadonnées
-                    sources,
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'À contacter',
-                    contact.get('url', '')
-                ]
+                        # MÉTADONNÉES
+                        sources,
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'À contacter',
+                        contact.get('url', '')
+                    ]
 
-                worksheet.append_row(row)
-                time.sleep(0.5)  # Rate limiting
+                    worksheet.append_row(row)
+                    time.sleep(0.5)  # Rate limiting
+
+                except Exception as row_error:
+                    # Vérifier si c'est une erreur de quota Google Drive
+                    error_str = str(row_error)
+                    if '403' in error_str and 'quota' in error_str.lower():
+                        print(f"\n⚠️  ERREUR: Quota de stockage Google Drive dépassé !")
+                        print(f"   Contact {idx}/{len(contacts)} - Impossible de continuer l'export vers Sheets")
+                        print(f"\n💡 SOLUTIONS:")
+                        print(f"   1. Libérez de l'espace sur votre Google Drive")
+                        print(f"   2. Supprimez d'anciennes Google Sheets")
+                        print(f"   3. Utilisez un autre compte Google")
+                        print(f"\n📦 Les données seront automatiquement exportées en CSV comme alternative")
+                        raise row_error  # Propager l'erreur pour le fallback
+                    else:
+                        print(f"⚠️  Erreur pour le contact {contact.get('name', 'N/A')}: {row_error}")
+                        continue
 
             print("✅ Données ajoutées à Google Sheets")
 
         except Exception as e:
-            print(f"❌ Erreur lors de l'ajout à Google Sheets: {e}")
+            error_str = str(e)
+            # Gestion spécifique de l'erreur de quota
+            if '403' in error_str and 'quota' in error_str.lower():
+                print(f"\n❌ Erreur Google Sheets - Quota de stockage dépassé")
+                print(f"   Message: {e}")
+                print(f"\n💾 Export CSV activé automatiquement comme alternative")
+                return False  # Indique que l'export a échoué
+            else:
+                print(f"❌ Erreur lors de l'ajout à Google Sheets: {e}")
+                return False
+
+        return True  # Export réussi
 
     def export_to_csv(self, contacts: List[Dict], filename: str = None):
         """
@@ -449,9 +510,11 @@ class GoogleMapsScraperPro:
             print("="*60)
 
             # Export Google Sheets
-            self.save_to_google_sheets(qualified)
+            sheets_success = self.save_to_google_sheets(qualified)
 
-            # Export CSV
+            # Export CSV (toujours fait, ou comme fallback si Sheets échoue)
+            if sheets_success is False:
+                print("\n💾 Export CSV de secours activé...")
             self.export_to_csv(qualified)
 
         print("\n" + "="*60)
