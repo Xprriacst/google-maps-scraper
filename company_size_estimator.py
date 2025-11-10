@@ -189,7 +189,7 @@ Réponds UNIQUEMENT au format JSON suivant (sans markdown, juste le JSON) :
         }
 
         data = {
-            'model': 'gpt-4o',  # GPT-4o pour meilleure précision
+            'model': 'gpt-5-mini',  # GPT-5 Mini : 10x moins cher que GPT-4o, meilleure précision
             'messages': [
                 {
                     'role': 'system',
