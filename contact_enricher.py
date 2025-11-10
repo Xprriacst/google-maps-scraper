@@ -144,6 +144,18 @@ class ContactEnricher:
         except Exception as e:
             print(f"⚠️  Impossible d'initialiser l'estimation IA: {e}")
 
+        # Website Scraper (extraction emails depuis sites web)
+        self.website_scraper = None
+        self.use_website_scraping = True
+
+        try:
+            from website_scraper import WebsiteScraper
+            self.website_scraper = WebsiteScraper(timeout=10, max_pages=3)
+            print("✅ Scraping web activé")
+        except Exception as e:
+            print(f"⚠️  Impossible d'initialiser le scraping web: {e}")
+            self.use_website_scraping = False
+
     def _get_job_titles_for_role(self, role_type: str) -> List[str]:
         """
         Convertit un type de rôle UI en liste de job titles pour Apollo/Dropcontact
@@ -904,6 +916,43 @@ class ContactEnricher:
 
             except Exception as e:
                 print(f"  ⚠️  Erreur Dropcontact: {e}")
+
+        # 2.3 SCRAPING WEB: Extraire emails directement du site si aucun contact trouvé
+        if not contacts_found and website and self.use_website_scraping and self.website_scraper:
+            print("  🌐 Étape 2.6/3: Scraping du site web...")
+            try:
+                scraping_result = self.website_scraper.scrape_website(website, company_name)
+
+                if scraping_result['success'] and scraping_result.get('best_email'):
+                    best_email, score, reason = scraping_result['best_email']
+
+                    # Essayer de trouver un nom associé
+                    contact_name = ""
+                    if scraping_result['contact_names']:
+                        contact_name = scraping_result['contact_names'][0]
+
+                    # Remplir le contact principal
+                    enriched['contact_name'] = contact_name
+                    enriched['contact_1_name'] = contact_name
+                    enriched['contact_email'] = best_email
+                    enriched['contact_1_email'] = best_email
+                    enriched['email_confidence'] = 'medium' if score > 20 else 'low'
+                    enriched['contact_1_email_confidence'] = enriched['email_confidence']
+                    enriched['data_sources'].append('website_scraping')
+
+                    # Ajouter contacts supplémentaires si disponibles
+                    if len(scraping_result['all_emails_scored']) > 1:
+                        for i, (email, sc, rs) in enumerate(scraping_result['all_emails_scored'][1:3], 2):
+                            enriched[f'contact_{i}_email'] = email
+                            enriched[f'contact_{i}_email_confidence'] = 'medium' if sc > 20 else 'low'
+                            if i <= len(scraping_result['contact_names']):
+                                enriched[f'contact_{i}_name'] = scraping_result['contact_names'][i-1]
+
+                    contacts_found = True
+                    print(f"  ✅ Email trouvé par scraping web: {best_email}")
+
+            except Exception as e:
+                print(f"  ⚠️  Erreur scraping web: {e}")
 
         # 3. Fallback: utiliser le dirigeant légal si aucun contact trouvé
         if not enriched['contact_name'] and api_data['legal_manager']:
