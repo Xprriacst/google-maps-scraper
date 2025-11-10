@@ -2,6 +2,11 @@
 """
 Module d'enrichissement de contacts pour la prospection B2B
 Trouve les décideurs, enrichit avec LinkedIn, APIs publiques et scraping avancé
+
+Stratégie d'enrichissement (v2.0) :
+1. API entreprise.data.gouv.fr → Données officielles (SIRET, CA, effectifs, dirigeant légal)
+2. Dropcontact → Décideur commercial + email vérifié
+3. Fallback → Dirigeant légal si Dropcontact ne trouve rien
 """
 
 import re
@@ -49,8 +54,13 @@ class ContactEnricher:
         'apprenti', 'apprentie',
     ]
 
-    def __init__(self):
-        """Initialise l'enrichisseur de contacts"""
+    def __init__(self, use_dropcontact: bool = True):
+        """
+        Initialise l'enrichisseur de contacts
+
+        Args:
+            use_dropcontact: Utiliser Dropcontact pour l'enrichissement (défaut: True)
+        """
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -68,6 +78,26 @@ class ContactEnricher:
 
         # Cache pour éviter les appels répétés
         self.cache = {}
+
+        # Dropcontact enricher (optionnel)
+        self.dropcontact = None
+        self.use_dropcontact = use_dropcontact
+
+        if use_dropcontact:
+            try:
+                from dropcontact_enricher import DropcontactEnricher
+                from utils import get_env
+
+                api_key = get_env('DROPCONTACT_API_KEY')
+                if api_key:
+                    self.dropcontact = DropcontactEnricher(api_key)
+                    print("✅ Dropcontact activé")
+                else:
+                    print("⚠️  DROPCONTACT_API_KEY non configurée - enrichissement sans Dropcontact")
+                    self.use_dropcontact = False
+            except Exception as e:
+                print(f"⚠️  Impossible d'initialiser Dropcontact: {e}")
+                self.use_dropcontact = False
 
     def extract_domain(self, website: str) -> Optional[str]:
         """
@@ -624,42 +654,8 @@ class ContactEnricher:
             'data_sources': []
         }
 
-        # 1. Chercher l'équipe sur le site web
-        team = self.extract_team_from_website(website, company_name)
-
-        if team:
-            # Prendre le décideur le plus haut placé
-            decision_maker = team[0]
-            enriched['contact_name'] = decision_maker['name']
-            enriched['contact_position'] = decision_maker['position']
-            enriched['data_sources'].append('website_team')
-
-            # 2. Construire l'email à partir du nom
-            # D'abord, scraper le site pour trouver des emails
-            from email_finder import EmailFinder
-            email_finder = EmailFinder()
-            found_emails = email_finder.scrape_website_for_emails(website)
-
-            # Construire l'email du décideur
-            email_result = self.build_email_from_name(
-                decision_maker['name'],
-                website,
-                found_emails
-            )
-
-            enriched['contact_email'] = email_result['email']
-            enriched['email_confidence'] = email_result['confidence']
-
-            if email_result['confidence'] in ['high', 'medium']:
-                enriched['data_sources'].append('email_constructed')
-
-        # 3. Chercher sur LinkedIn (TODO: implémenter avec API)
-        # linkedin_result = self.find_decision_maker_linkedin(company_name)
-        # if linkedin_result['name']:
-        #     enriched['contact_linkedin'] = linkedin_result['linkedin_url']
-        #     enriched['data_sources'].append('linkedin')
-
-        # 4. Enrichir avec les APIs publiques
+        # 1. Enrichir avec l'API entreprise.data.gouv.fr (données officielles)
+        print("  📊 Étape 1/2: API entreprise.data.gouv.fr...")
         api_data = self.enrich_with_api(company_name, website, address)
 
         enriched['siret'] = api_data['siret']
@@ -672,19 +668,47 @@ class ContactEnricher:
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
 
-        # Si on n'a pas trouvé de contact sur le site, utiliser le dirigeant légal
+        # 2. Chercher le décideur commercial avec Dropcontact
+        if self.use_dropcontact and self.dropcontact:
+            print("  🎯 Étape 2/2: Dropcontact (décideur commercial)...")
+
+            try:
+                dropcontact_result = self.dropcontact.enrich_contact(
+                    company_name=company_name,
+                    website=website,
+                    company_siret=enriched['siret']
+                )
+
+                # Si Dropcontact a trouvé un contact
+                if dropcontact_result['contact_name']:
+                    enriched['contact_name'] = dropcontact_result['contact_name']
+                    enriched['contact_position'] = dropcontact_result['contact_position']
+                    enriched['contact_email'] = dropcontact_result['contact_email']
+                    enriched['contact_phone'] = dropcontact_result['contact_phone']
+                    enriched['contact_linkedin'] = dropcontact_result['contact_linkedin']
+                    enriched['email_confidence'] = dropcontact_result['email_confidence']
+                    enriched['data_sources'].extend(dropcontact_result['data_sources'])
+
+            except Exception as e:
+                print(f"  ⚠️  Erreur Dropcontact: {e}")
+        else:
+            print("  ⏭️  Étape 2/2: Dropcontact désactivé - utilisation du dirigeant légal")
+
+        # 3. Fallback: utiliser le dirigeant légal si aucun contact trouvé
         if not enriched['contact_name'] and api_data['legal_manager']:
+            print("  🔄 Fallback: Utilisation du dirigeant légal...")
             enriched['contact_name'] = api_data['legal_manager']
             enriched['contact_position'] = api_data['legal_manager_position'] or 'Gérant'
             enriched['data_sources'].append('legal_data')
 
-            # Construire l'email
-            email_result = self.build_email_from_name(
-                api_data['legal_manager'],
-                website
-            )
-            enriched['contact_email'] = email_result['email']
-            enriched['email_confidence'] = email_result['confidence']
+            # Construire l'email (non vérifié)
+            if website:
+                email_result = self.build_email_from_name(
+                    api_data['legal_manager'],
+                    website
+                )
+                enriched['contact_email'] = email_result['email']
+                enriched['email_confidence'] = email_result['confidence']
 
         # Message récapitulatif
         if enriched['contact_name']:

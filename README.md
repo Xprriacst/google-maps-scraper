@@ -64,6 +64,7 @@ cp .env.example .env
    - **GOOGLE_SHEET_ID** : L'ID de votre Google Sheet
    - **GOHIGHLEVEL_API_KEY** : Votre clé API GoHighLevel
    - **GOHIGHLEVEL_LOCATION_ID** : Votre Location ID GoHighLevel
+   - **DROPCONTACT_API_KEY** : (Recommandé) Votre clé API Dropcontact pour l'enrichissement décideurs B2B - Taux de succès 60-80% (https://www.dropcontact.com/api)
    - **HUNTER_API_KEY** : (Optionnel) Votre clé API Hunter.io pour la recherche de contacts
 
 4. Configurer Google Sheets :
