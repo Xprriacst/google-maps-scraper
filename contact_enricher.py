@@ -54,14 +54,20 @@ class ContactEnricher:
         'apprenti', 'apprentie',
     ]
 
-    def __init__(self, use_dropcontact: bool = True, use_apollo: bool = True):
+    def __init__(self, use_dropcontact: bool = True, use_apollo: bool = True,
+                 use_adaptive_targeting: bool = True, target_role: str = None):
         """
         Initialise l'enrichisseur de contacts
 
         Args:
             use_dropcontact: Utiliser Dropcontact pour l'enrichissement (défaut: True)
             use_apollo: Utiliser Apollo.io pour l'enrichissement (défaut: True, prioritaire)
+            use_adaptive_targeting: Adapter le ciblage selon la taille de l'entreprise (défaut: True)
+            target_role: Type de contact forcé si adaptive désactivé (ex: "Dirigeant", "Direction commerciale")
         """
+        self.use_adaptive_targeting = use_adaptive_targeting
+        self.target_role = target_role
+
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -137,6 +143,51 @@ class ContactEnricher:
                 print("⚠️  OPENAI_API_KEY non configurée - estimation IA désactivée")
         except Exception as e:
             print(f"⚠️  Impossible d'initialiser l'estimation IA: {e}")
+
+    def _get_job_titles_for_role(self, role_type: str) -> List[str]:
+        """
+        Convertit un type de rôle UI en liste de job titles pour Apollo/Dropcontact
+
+        Args:
+            role_type: Type de rôle depuis l'UI (ex: "Dirigeant (CEO, Gérant, Président)")
+
+        Returns:
+            Liste de job titles à rechercher
+        """
+        role_mapping = {
+            "Dirigeant (CEO, Gérant, Président)": [
+                "CEO", "Managing Director", "Founder", "President", "Gérant", "Directeur Général",
+                "Co-Founder", "Owner", "Propriétaire", "Chief Executive Officer"
+            ],
+            "Direction commerciale": [
+                "Sales Director", "Chief Sales Officer", "VP Sales", "Directeur Commercial",
+                "Sales Manager", "Business Development Director", "Head of Sales"
+            ],
+            "Direction achats": [
+                "Purchasing Director", "Chief Procurement Officer", "VP Procurement",
+                "Directeur Achats", "Procurement Manager", "Head of Purchasing"
+            ],
+            "Direction marketing": [
+                "Marketing Director", "Chief Marketing Officer", "VP Marketing",
+                "Directeur Marketing", "Marketing Manager", "Head of Marketing"
+            ],
+            "Direction des opérations": [
+                "Operations Director", "Chief Operating Officer", "VP Operations",
+                "Directeur des Opérations", "Operations Manager", "COO"
+            ],
+            "Direction technique": [
+                "CTO", "Chief Technology Officer", "VP Engineering", "Directeur Technique",
+                "Technical Director", "Head of Engineering"
+            ],
+            "Direction financière": [
+                "CFO", "Chief Financial Officer", "Finance Director", "Directeur Financier",
+                "VP Finance", "Head of Finance"
+            ]
+        }
+
+        return role_mapping.get(role_type, [
+            "CEO", "Managing Director", "Founder", "President", "Gérant"
+        ])
 
     def extract_domain(self, website: str) -> Optional[str]:
         """
@@ -778,11 +829,19 @@ class ContactEnricher:
         if self.use_apollo and self.apollo:
             print("  👥 Étape 2/3: Apollo.io (recherche contacts)...")
             try:
-                # Définir les titres recherchés selon la taille
-                if employees_count <= 250:  # TPE/PME
-                    job_titles = ["CEO", "Managing Director", "Founder", "President", "Gérant"]
-                else:  # ETI/GE
-                    job_titles = ["Sales Director", "Business Development", "Purchasing Director", "Marketing Director"]
+                # Définir les titres recherchés
+                if self.use_adaptive_targeting:
+                    # Ciblage adaptatif selon la taille
+                    if employees_count <= 250:  # TPE/PME
+                        job_titles = ["CEO", "Managing Director", "Founder", "President", "Gérant"]
+                        print(f"     🎯 Ciblage adaptatif: Dirigeants (TPE/PME)")
+                    else:  # ETI/GE
+                        job_titles = ["Sales Director", "Business Development", "Purchasing Director", "Marketing Director"]
+                        print(f"     🎯 Ciblage adaptatif: Directeurs opérationnels (ETI/GE)")
+                else:
+                    # Ciblage manuel selon le choix utilisateur
+                    job_titles = self._get_job_titles_for_role(self.target_role)
+                    print(f"     🎯 Ciblage manuel: {self.target_role}")
 
                 apollo_contacts = self.apollo.search_people(
                     company_name=company_name,
@@ -818,11 +877,18 @@ class ContactEnricher:
             print("  🎯 Étape 2.5/3: Dropcontact (fallback recherche adaptée)...")
 
             try:
+                # Déterminer les rôles cibles pour Dropcontact
+                force_roles = None
+                if not self.use_adaptive_targeting and self.target_role:
+                    # Ciblage manuel: utiliser les job titles du rôle choisi
+                    force_roles = self._get_job_titles_for_role(self.target_role)
+
                 dropcontact_result = self.dropcontact.enrich_contact(
                     company_name=company_name,
                     website=website,
                     company_siret=enriched['siret'],
-                    employees=employees_count
+                    employees=employees_count,
+                    force_target_roles=force_roles
                 )
 
                 # Copier tous les champs de contact (incluant contact_1, contact_2, contact_3)

@@ -114,7 +114,8 @@ class DropcontactEnricher:
             return self.ROLES_ETI_GE
 
     def enrich_contact(self, company_name: str, website: str = None,
-                       company_siret: str = None, employees: int = 0) -> Dict:
+                       company_siret: str = None, employees: int = 0,
+                       force_target_roles: List[str] = None) -> Dict:
         """
         Enrichit un contact d'entreprise via Dropcontact
         Adapte automatiquement la recherche selon la taille de l'entreprise
@@ -124,19 +125,27 @@ class DropcontactEnricher:
             website: Site web de l'entreprise
             company_siret: SIRET de l'entreprise (optionnel, améliore la précision)
             employees: Nombre d'employés (pour adapter les rôles recherchés)
+            force_target_roles: Liste de rôles forcés (bypass le ciblage adaptatif)
 
         Returns:
             Dict avec les données enrichies du contact décideur
         """
         # Déterminer la catégorie et les rôles cibles
-        category = self._get_company_size_category(employees) if employees > 0 else 'PME'
-        target_roles = self._get_target_roles(employees) if employees > 0 else self.ROLES_TPE_PME
-
-        # Message adapté selon la taille
-        if category in ['TPE', 'PME']:
-            print(f"  🔍 Dropcontact: Recherche dirigeant pour {company_name[:40]} ({category})...")
+        if force_target_roles:
+            # Ciblage manuel forcé
+            category = 'Manuel'
+            target_roles = force_target_roles
+            print(f"  🔍 Dropcontact: Recherche ciblée pour {company_name[:40]} (ciblage manuel)...")
         else:
-            print(f"  🔍 Dropcontact: Recherche contact opérationnel pour {company_name[:40]} ({category})...")
+            # Ciblage adaptatif selon la taille
+            category = self._get_company_size_category(employees) if employees > 0 else 'PME'
+            target_roles = self._get_target_roles(employees) if employees > 0 else self.ROLES_TPE_PME
+
+            # Message adapté selon la taille
+            if category in ['TPE', 'PME']:
+                print(f"  🔍 Dropcontact: Recherche dirigeant pour {company_name[:40]} ({category})...")
+            else:
+                print(f"  🔍 Dropcontact: Recherche contact opérationnel pour {company_name[:40]} ({category})...")
 
         # Préparer la requête
         data = {

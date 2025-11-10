@@ -33,12 +33,14 @@ class GoogleMapsScraperPro:
     4. Export contacts qualifiés uniquement
     """
 
-    def __init__(self, min_score: int = 50):
+    def __init__(self, min_score: int = 50, use_adaptive_targeting: bool = True, target_role: str = None):
         """
         Initialise le scraper pro
 
         Args:
             min_score: Score minimum pour exporter un contact (défaut: 50)
+            use_adaptive_targeting: Utiliser le ciblage adaptatif selon la taille (défaut: True)
+            target_role: Type de contact forcé si adaptive désactivé (ex: "Dirigeant", "Direction commerciale")
         """
         self.apify_token = get_env('APIFY_API_TOKEN')
         self.google_sheet_id = get_env('GOOGLE_SHEET_ID')
@@ -52,7 +54,10 @@ class GoogleMapsScraperPro:
         # Initialiser les clients
         self.apify_client = ApifyClient(self.apify_token)
         self.google_sheet = None
-        self.enricher = ContactEnricher()
+        self.enricher = ContactEnricher(
+            use_adaptive_targeting=use_adaptive_targeting,
+            target_role=target_role
+        )
         self.scorer = ContactScorer()
         self.min_score = min_score
 

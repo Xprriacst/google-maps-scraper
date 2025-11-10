@@ -173,6 +173,37 @@ def render_sidebar():
 
     st.sidebar.markdown("---")
 
+    # Paramètres de ciblage des contacts
+    st.sidebar.subheader("🎯 Ciblage des contacts")
+
+    use_adaptive_targeting = st.sidebar.checkbox(
+        "Ciblage adaptatif automatique",
+        value=True,
+        help="Adapte le type de contact recherché selon la taille de l'entreprise (CEO pour TPE/PME, directeurs opérationnels pour ETI/GE)"
+    )
+
+    target_role = None
+    if not use_adaptive_targeting:
+        target_role = st.sidebar.selectbox(
+            "Type de contact recherché",
+            options=[
+                "Dirigeant (CEO, Gérant, Président)",
+                "Direction commerciale",
+                "Direction achats",
+                "Direction marketing",
+                "Direction des opérations",
+                "Direction technique",
+                "Direction financière"
+            ],
+            help="Rechercher systématiquement ce type de contact, quelle que soit la taille de l'entreprise"
+        )
+
+    # Stocker dans session state
+    st.session_state.use_adaptive_targeting = use_adaptive_targeting
+    st.session_state.target_role = target_role
+
+    st.sidebar.markdown("---")
+
     # Bouton de lancement
     start_button = st.sidebar.button(
         "🚀 Lancer la prospection",
@@ -239,7 +270,15 @@ def run_prospection(search_query, max_results):
             status_text.text("Phase 1/3: Initialisation...")
             progress_bar.progress(10)
 
-            scraper = GoogleMapsScraperPro(min_score=0)
+            # Récupérer les paramètres de ciblage
+            use_adaptive = st.session_state.get('use_adaptive_targeting', True)
+            target_role = st.session_state.get('target_role', None)
+
+            scraper = GoogleMapsScraperPro(
+                min_score=0,
+                use_adaptive_targeting=use_adaptive,
+                target_role=target_role
+            )
 
             # Phase 2: Scraping
             status_text.text(f"Phase 2/3: Scraping de {max_results} entreprises...")
