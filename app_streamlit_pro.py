@@ -136,15 +136,6 @@ def render_sidebar():
         help="Plus vous scrapez, plus vous aurez de contacts qualifiés (ratio ~25%)"
     )
 
-    min_score = st.sidebar.slider(
-        "Score minimum pour qualifier",
-        min_value=0,
-        max_value=100,
-        value=50,
-        step=10,
-        help="Score 80+ = Premium, 50-79 = Qualifié, 20-49 = À vérifier, 0-19 = Faible"
-    )
-
     st.sidebar.markdown("---")
 
     # Bouton de lancement
@@ -188,9 +179,9 @@ def render_sidebar():
         - 🔴 Faible (0-19)
         """)
 
-    return search_query, max_results, min_score, start_button
+    return search_query, max_results, start_button
 
-def run_prospection(search_query, max_results, min_score):
+def run_prospection(search_query, max_results):
     """Lance la prospection et affiche la progression"""
     st.session_state.running = True
 
@@ -209,7 +200,7 @@ def run_prospection(search_query, max_results, min_score):
             status_text.text("Phase 1/3: Initialisation...")
             progress_bar.progress(10)
 
-            scraper = GoogleMapsScraperPro(min_score=min_score)
+            scraper = GoogleMapsScraperPro(min_score=0)
 
             # Phase 2: Scraping
             status_text.text(f"Phase 2/3: Scraping de {max_results} entreprises...")
@@ -262,8 +253,8 @@ def run_prospection(search_query, max_results, min_score):
 
             progress_bar.progress(90)
 
-            # Filtrer les contacts qualifiés
-            qualified = [c for c in enriched if c.get('score_total', 0) >= min_score]
+            # Récupérer tous les contacts (pas de filtrage par score)
+            qualified = enriched
             qualified.sort(key=lambda x: x.get('score_total', 0), reverse=True)
 
             # Calculer les statistiques
@@ -509,11 +500,11 @@ def main():
     render_header()
 
     # Sidebar
-    search_query, max_results, min_score, start_button = render_sidebar()
+    search_query, max_results, start_button = render_sidebar()
 
     # Si le bouton est cliqué
     if start_button:
-        run_prospection(search_query, max_results, min_score)
+        run_prospection(search_query, max_results)
 
     # Afficher les résultats s'ils existent
     if st.session_state.results:
