@@ -668,6 +668,28 @@ class ContactEnricher:
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
 
+        # 1.5 Si pas d'effectifs, estimation IA de la taille
+        if not enriched['employees'] or enriched['employees'] == '':
+            try:
+                from company_size_estimator import CompanySizeEstimator
+                estimator = CompanySizeEstimator()
+
+                if estimator.enabled:
+                    print("  🤖 Étape 1.5/2: Estimation IA de la taille...")
+                    ai_result = estimator.estimate_size(
+                        company_name=company_name,
+                        website=website,
+                        description=enriched.get('legal_form', ''),
+                        category=''
+                    )
+
+                    if ai_result['employees_estimated'] > 0:
+                        enriched['employees'] = str(ai_result['employees_estimated'])
+                        enriched['data_sources'].append('ai_estimated')
+                        print(f"  ✅ Taille estimée par IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+            except Exception as e:
+                print(f"  ⚠️  Erreur estimation IA: {e}")
+
         # 2. Chercher le décideur avec Dropcontact (adapté selon la taille)
         if self.use_dropcontact and self.dropcontact:
             # Parser le nombre d'employés

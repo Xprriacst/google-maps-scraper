@@ -386,20 +386,25 @@ def render_contacts_table(contacts):
     def get_company_size(contact):
         """Détermine la catégorie de taille de l'entreprise"""
         employees_str = str(contact.get('employees', ''))
+        data_sources = contact.get('data_sources', [])
+        is_ai_estimated = 'ai_estimated' in data_sources
+
         if not employees_str or employees_str == 'N/A':
             return '❓ Inconnu'
 
         try:
             # Extraire le nombre (peut être "50" ou "10-20")
             employees = int(employees_str.split('-')[0].strip())
+            ai_marker = ' 🤖' if is_ai_estimated else ''
+
             if employees <= 10:
-                return '🏪 TPE (≤10)'
+                return f'🏪 TPE (≤10){ai_marker}'
             elif employees <= 250:
-                return '🏢 PME (11-250)'
+                return f'🏢 PME (11-250){ai_marker}'
             elif employees <= 5000:
-                return '🏭 ETI (251-5000)'
+                return f'🏭 ETI (251-5000){ai_marker}'
             else:
-                return '🏰 GE (5000+)'
+                return f'🏰 GE (5000+){ai_marker}'
         except:
             return '❓ Inconnu'
 
