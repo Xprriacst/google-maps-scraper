@@ -149,10 +149,6 @@ class DropcontactEnricher:
             'language': 'fr'  # Priorité aux contacts francophones
         }
 
-        # Filtrer par rôle si spécifié
-        if find_role:
-            data['search_role'] = find_role
-
         try:
             self.stats['requests'] += 1
 
