@@ -66,12 +66,19 @@ class GoogleMapsScraper:
             try:
                 worksheet = self.google_sheet.worksheet('Entreprises')
             except:
-                worksheet = self.google_sheet.add_worksheet('Entreprises', rows=1000, cols=12)
-                # Ajouter les en-têtes
+                worksheet = self.google_sheet.add_worksheet('Entreprises', rows=1000, cols=20)
+                # Ajouter les en-têtes avec 3 types de contacts
                 headers = [
-                    'Nom', 'Adresse', 'Téléphone', 'Site Web', 'Note', 
-                    'Nombre Avis', 'Catégorie', 'Nom Contact', 'Email Contact', 
-                    'Confiance Email', 'Poste Contact', 'Date Ajout', 'URL Google Maps'
+                    'Nom', 'Adresse', 'Téléphone', 'Site Web', 'Note',
+                    'Nombre Avis', 'Catégorie',
+                    # Contact 1 - Générique
+                    'Email Pattern', 'Conf.',
+                    # Contact 2 - Site Web
+                    'Email Site', 'Conf.',
+                    # Contact basique (si trouvé)
+                    'Nom Contact', 'Poste',
+                    # Métadonnées
+                    'Date Ajout', 'URL Google Maps'
                 ]
                 worksheet.append_row(headers)
             
@@ -132,35 +139,51 @@ class GoogleMapsScraper:
     
     def find_contact_info(self, company_name, website=None):
         """
-        Trouve les informations de contact d'une entreprise
+        Trouve les informations de contact d'une entreprise (3 types)
         Scrape le site web et génère des patterns d'emails intelligents
-        
+
         Args:
             company_name: Nom de l'entreprise
             website: Site web de l'entreprise (optionnel)
-        
+
         Returns:
-            Dict avec nom, email, poste du contact
+            Dict avec 3 types de contacts + nom/poste si trouvé
         """
         contact_info = {
+            # Contact 1: Email générique
+            'email_generated': '',
+            'email_generated_confidence': 'low',
+
+            # Contact 2: Email site web
+            'email_scraped': '',
+            'email_scraped_confidence': '',
+
+            # Contact basique (nom si trouvé)
             'name': '',
-            'email': '',
             'position': 'Gérant',
+
+            # Pour compatibilité (email principal)
+            'email': '',
             'email_confidence': 'low'
         }
-        
-        # Utiliser le nouveau EmailFinder
+
+        # Utiliser le nouveau EmailFinder (retourne les 3 types)
         result = self.email_finder.find_contact_email(company_name, website)
-        contact_info['email'] = result['email']
-        contact_info['email_confidence'] = result['confidence']
-        
+
+        contact_info['email_generated'] = result.get('email_generated', '')
+        contact_info['email_generated_confidence'] = result.get('email_generated_confidence', 'low')
+        contact_info['email_scraped'] = result.get('email_scraped', '')
+        contact_info['email_scraped_confidence'] = result.get('email_scraped_confidence', '')
+        contact_info['email'] = result.get('email', '')
+        contact_info['email_confidence'] = result.get('confidence', 'low')
+
         # Essayer de trouver le nom du gérant
         if website:
             manager_name = self.email_finder.find_manager_name(company_name, website)
             if manager_name:
                 contact_info['name'] = manager_name
                 contact_info['position'] = 'Gérant'
-        
+
         return contact_info
     
     def save_to_google_sheets(self, businesses_data):
@@ -189,10 +212,16 @@ class GoogleMapsScraper:
                         business.get('rating', ''),
                         business.get('reviews_count', ''),
                         business.get('category', ''),
+                        # Contact 1 - Email Pattern
+                        business.get('email_generated', ''),
+                        business.get('email_generated_confidence', 'low').upper(),
+                        # Contact 2 - Email Site
+                        business.get('email_scraped', ''),
+                        business.get('email_scraped_confidence', '').upper(),
+                        # Contact basique
                         business.get('contact_name', ''),
-                        business.get('contact_email', ''),
-                        business.get('email_confidence', 'low'),
                         business.get('contact_position', ''),
+                        # Métadonnées
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         business.get('url', '')
                     ]
@@ -347,8 +376,12 @@ class GoogleMapsScraper:
                 print(f"    💾 Contact trouvé en cache")
                 cached_data = self.db.get_company_data(company_id)
 
-                # Fusionner avec les données fraîches de Google Maps
+                # Fusionner avec les données fraîches de Google Maps (3 types d'emails)
                 business.update({
+                    'email_generated': cached_data.get('email_generated', ''),
+                    'email_generated_confidence': cached_data.get('email_generated_confidence', 'low'),
+                    'email_scraped': cached_data.get('email_scraped', ''),
+                    'email_scraped_confidence': cached_data.get('email_scraped_confidence', ''),
                     'contact_name': cached_data.get('contact_name', ''),
                     'contact_email': cached_data.get('contact_email', ''),
                     'email_confidence': cached_data.get('email_confidence', 'low'),
@@ -356,13 +389,17 @@ class GoogleMapsScraper:
                 })
                 cache_hits += 1
             else:
-                # Chercher les informations de contact
+                # Chercher les informations de contact (3 types)
                 print(f"    🔍 Recherche du contact...")
                 contact = self.find_contact_info(
                     business['name'],
                     business['website']
                 )
 
+                business['email_generated'] = contact.get('email_generated', '')
+                business['email_generated_confidence'] = contact.get('email_generated_confidence', 'low')
+                business['email_scraped'] = contact.get('email_scraped', '')
+                business['email_scraped_confidence'] = contact.get('email_scraped_confidence', '')
                 business['contact_name'] = contact['name']
                 business['contact_email'] = contact['email']
                 business['email_confidence'] = contact.get('email_confidence', 'low')

@@ -85,17 +85,14 @@ class GoogleMapsScraperPro:
             except:
                 worksheet = self.google_sheet.add_worksheet('Prospection', rows=1000, cols=30)
 
-                # Ajouter les en-têtes complets
+                # Ajouter les en-têtes complets (avec 3 types de contacts)
                 headers = [
-                    # Contact
-                    'Nom Contact',
-                    'Fonction',
-                    'Email',
-                    'Confiance Email',
-                    'LinkedIn',
-                    'Téléphone Direct',
+                    # CONTACTS (3 types)
+                    'Email Pattern', 'Conf.',  # Contact 1
+                    'Email Site', 'Conf.',  # Contact 2
+                    'Nom Décideur', 'Fonction', 'Email Décideur', 'Conf.', 'LinkedIn', 'Tél Direct',  # Contact 3
 
-                    # Entreprise
+                    # ENTREPRISE
                     'Nom Entreprise',
                     'SIRET',
                     'Adresse',
@@ -105,14 +102,14 @@ class GoogleMapsScraperPro:
                     'Nb Avis',
                     'Catégorie',
 
-                    # Enrichissement
+                    # ENRICHISSEMENT
                     'SIREN',
                     'Forme Juridique',
                     'CA',
                     'Employés',
                     'Date Création',
 
-                    # Scoring
+                    # SCORING
                     'Score Total (/100)',
                     'Score Email (/40)',
                     'Score Contact (/30)',
@@ -120,7 +117,7 @@ class GoogleMapsScraperPro:
                     'Catégorie',
                     'Priorité',
 
-                    # Métadonnées
+                    # MÉTADONNÉES
                     'Sources Données',
                     'Date Ajout',
                     'Statut',  # À contacter / Contacté / Répondu
@@ -311,15 +308,19 @@ class GoogleMapsScraperPro:
                     sources = ', '.join(contact.get('data_sources', []))
 
                     row = [
-                        # Contact
-                        contact.get('contact_name', ''),
+                        # CONTACTS (3 types)
+                        contact.get('email_generated', ''),  # Contact 1
+                        contact.get('email_generated_confidence', 'low').upper(),
+                        contact.get('email_scraped', ''),  # Contact 2
+                        contact.get('email_scraped_confidence', '').upper(),
+                        contact.get('contact_name', ''),  # Contact 3
                         contact.get('contact_position', ''),
                         contact.get('contact_email', ''),
                         contact.get('email_confidence', '').upper(),
                         contact.get('contact_linkedin', ''),
                         contact.get('contact_phone', ''),
 
-                        # Entreprise
+                        # ENTREPRISE
                         contact.get('name', ''),
                         contact.get('siret', ''),
                         contact.get('address', ''),
@@ -329,14 +330,14 @@ class GoogleMapsScraperPro:
                         contact.get('reviews_count', ''),
                         contact.get('category', ''),
 
-                        # Enrichissement
+                        # ENRICHISSEMENT
                         contact.get('siren', ''),
                         contact.get('legal_form', ''),
                         contact.get('revenue', ''),
                         contact.get('employees', ''),
                         contact.get('creation_date', ''),
 
-                        # Scoring
+                        # SCORING
                         contact.get('score_total', ''),
                         contact.get('score_email', ''),
                         contact.get('score_contact', ''),
@@ -344,7 +345,7 @@ class GoogleMapsScraperPro:
                         f"{contact.get('emoji', '')} {contact.get('category', '')}",
                         contact.get('priority', ''),
 
-                        # Métadonnées
+                        # MÉTADONNÉES
                         sources,
                         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'À contacter',

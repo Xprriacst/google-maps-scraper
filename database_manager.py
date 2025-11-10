@@ -67,17 +67,28 @@ class DatabaseManager:
             ON companies(website)
         ''')
 
-        # Table des contacts enrichis
+        # Table des contacts enrichis (3 types de contacts)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS contacts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company_id INTEGER NOT NULL,
+
+                -- Contact 1: Email Générique (Pattern)
+                email_generated TEXT,
+                email_generated_confidence TEXT DEFAULT 'low',
+
+                -- Contact 2: Email Site Web (Scrapé)
+                email_scraped TEXT,
+                email_scraped_confidence TEXT,
+
+                -- Contact 3: Contact Décideur (Pro)
                 contact_name TEXT,
                 contact_position TEXT,
                 contact_email TEXT,
                 email_confidence TEXT,
                 contact_linkedin TEXT,
                 contact_phone TEXT,
+
                 data_sources TEXT,  -- JSON array
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -293,7 +304,7 @@ class DatabaseManager:
         return company_id
 
     def _save_contact(self, company_id: int, data: Dict, timestamp: str):
-        """Sauvegarde ou met à jour un contact"""
+        """Sauvegarde ou met à jour un contact (avec 3 types d'emails)"""
         cursor = self.conn.cursor()
 
         # Convertir les sources en JSON
@@ -306,11 +317,17 @@ class DatabaseManager:
         if exists:
             cursor.execute('''
                 UPDATE contacts
-                SET contact_name = ?, contact_position = ?, contact_email = ?,
+                SET email_generated = ?, email_generated_confidence = ?,
+                    email_scraped = ?, email_scraped_confidence = ?,
+                    contact_name = ?, contact_position = ?, contact_email = ?,
                     email_confidence = ?, contact_linkedin = ?, contact_phone = ?,
                     data_sources = ?, updated_at = ?
                 WHERE company_id = ?
             ''', (
+                data.get('email_generated', ''),
+                data.get('email_generated_confidence', 'low'),
+                data.get('email_scraped', ''),
+                data.get('email_scraped_confidence', ''),
                 data.get('contact_name', ''),
                 data.get('contact_position', ''),
                 data.get('contact_email', ''),
@@ -324,11 +341,18 @@ class DatabaseManager:
         else:
             cursor.execute('''
                 INSERT INTO contacts
-                (company_id, contact_name, contact_position, contact_email,
-                 email_confidence, contact_linkedin, contact_phone, data_sources, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (company_id, email_generated, email_generated_confidence,
+                 email_scraped, email_scraped_confidence,
+                 contact_name, contact_position, contact_email,
+                 email_confidence, contact_linkedin, contact_phone,
+                 data_sources, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 company_id,
+                data.get('email_generated', ''),
+                data.get('email_generated_confidence', 'low'),
+                data.get('email_scraped', ''),
+                data.get('email_scraped_confidence', ''),
                 data.get('contact_name', ''),
                 data.get('contact_position', ''),
                 data.get('contact_email', ''),

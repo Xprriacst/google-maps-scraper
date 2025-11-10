@@ -577,7 +577,15 @@ class ContactEnricher:
         print(f"\n🔍 Enrichissement: {company_name}")
 
         enriched = {
-            # Contact
+            # Contact 1: Email générique (pattern)
+            'email_generated': '',
+            'email_generated_confidence': 'low',
+
+            # Contact 2: Email scrapé sur site
+            'email_scraped': '',
+            'email_scraped_confidence': '',
+
+            # Contact 3: Décideur (Pro)
             'contact_name': '',
             'contact_position': '',
             'contact_email': '',
@@ -598,7 +606,22 @@ class ContactEnricher:
             'data_sources': []
         }
 
-        # 1. Chercher l'équipe sur le site web
+        # 0. Générer les emails génériques et scrapés (Contacts 1 & 2)
+        from email_finder import EmailFinder
+        email_finder = EmailFinder()
+        basic_emails = email_finder.find_contact_email(company_name, website)
+
+        enriched['email_generated'] = basic_emails.get('email_generated', '')
+        enriched['email_generated_confidence'] = basic_emails.get('email_generated_confidence', 'low')
+        enriched['email_scraped'] = basic_emails.get('email_scraped', '')
+        enriched['email_scraped_confidence'] = basic_emails.get('email_scraped_confidence', '')
+
+        if enriched['email_generated']:
+            enriched['data_sources'].append('email_generated')
+        if enriched['email_scraped']:
+            enriched['data_sources'].append('email_scraped')
+
+        # 1. Chercher l'équipe sur le site web (Contact 3 - Décideur)
         team = self.extract_team_from_website(website, company_name)
 
         if team:
@@ -608,10 +631,8 @@ class ContactEnricher:
             enriched['contact_position'] = decision_maker['position']
             enriched['data_sources'].append('website_team')
 
-            # 2. Construire l'email à partir du nom
-            # D'abord, scraper le site pour trouver des emails
-            from email_finder import EmailFinder
-            email_finder = EmailFinder()
+            # 2. Construire l'email du décideur à partir du nom
+            # Scraper le site pour trouver des emails et détecter le pattern
             found_emails = email_finder.scrape_website_for_emails(website)
 
             # Construire l'email du décideur
@@ -646,13 +667,13 @@ class ContactEnricher:
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
 
-        # Si on n'a pas trouvé de contact sur le site, utiliser le dirigeant légal
+        # Si on n'a pas trouvé de contact sur le site, utiliser le dirigeant légal (Contact 3)
         if not enriched['contact_name'] and api_data['legal_manager']:
             enriched['contact_name'] = api_data['legal_manager']
             enriched['contact_position'] = api_data['legal_manager_position'] or 'Gérant'
             enriched['data_sources'].append('legal_data')
 
-            # Construire l'email
+            # Construire l'email du dirigeant
             email_result = self.build_email_from_name(
                 api_data['legal_manager'],
                 website
@@ -661,6 +682,9 @@ class ContactEnricher:
             enriched['email_confidence'] = email_result['confidence']
 
         print(f"  ✅ Enrichissement terminé - Sources: {', '.join(enriched['data_sources'])}")
+        print(f"  📧 Contact 1 (Pattern): {enriched['email_generated']} ({enriched['email_generated_confidence']})")
+        print(f"  📧 Contact 2 (Scrapé): {enriched['email_scraped'] or 'N/A'} ({enriched['email_scraped_confidence'] or '-'})")
+        print(f"  📧 Contact 3 (Décideur): {enriched['contact_email'] or 'N/A'} - {enriched['contact_name'] or 'N/A'} ({enriched['email_confidence']})")
 
         return enriched
 
