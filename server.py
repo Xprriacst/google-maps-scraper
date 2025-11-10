@@ -61,7 +61,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
                 self.send_json_response({"success": False, "error": "Recherche vide"})
                 return
 
-            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'simple', 0))
+            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'simple', 0, True))
             thread.daemon = True
             thread.start()
 
@@ -81,12 +81,13 @@ class ScraperHandler(BaseHTTPRequestHandler):
             search_query = data.get('search_query', '')
             max_results = data.get('max_results', 50)
             min_score = data.get('min_score', 70)
+            use_adaptive_targeting = data.get('use_adaptive_targeting', True)
 
             if not search_query:
                 self.send_json_response({"success": False, "error": "Recherche vide"})
                 return
 
-            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'pro', min_score))
+            thread = threading.Thread(target=self.run_scraper, args=(search_query, max_results, 'pro', min_score, use_adaptive_targeting))
             thread.daemon = True
             thread.start()
 
@@ -95,7 +96,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
     
-    def run_scraper(self, search_query, max_results, mode='simple', min_score=0):
+    def run_scraper(self, search_query, max_results, mode='simple', min_score=0, use_adaptive_targeting=True):
         """Exécute le scraping"""
         global scraping_state
 
@@ -108,8 +109,9 @@ class ScraperHandler(BaseHTTPRequestHandler):
             scraping_state["results"] = []
 
             if mode == 'pro':
-                scraping_state["message"] = f"🎯 Mode PRO - Recherche de {max_results} entreprises: {search_query} (Score min: {min_score})"
-                scraper = GoogleMapsScraperPro(min_score=min_score)
+                target_text = "Décideurs" if use_adaptive_targeting else "Tous contacts"
+                scraping_state["message"] = f"🎯 Mode PRO - {target_text} - Recherche de {max_results} entreprises: {search_query} (Score min: {min_score})"
+                scraper = GoogleMapsScraperPro(min_score=min_score, use_adaptive_targeting=use_adaptive_targeting)
             else:
                 scraping_state["message"] = f"Recherche de {max_results} entreprises: {search_query}"
                 scraper = GoogleMapsScraper()
@@ -466,6 +468,21 @@ class ScraperHandler(BaseHTTPRequestHandler):
                 </div>
             </div>
 
+            <div class="form-group" id="targetGroup" style="display: none;">
+                <label>
+                    <input
+                        type="checkbox"
+                        id="useAdaptiveTargeting"
+                        checked
+                        style="margin-right: 8px; transform: scale(1.2);"
+                    >
+                    🎯 Cibler uniquement les décideurs (CEO, Directeurs, etc.)
+                </label>
+                <small style="display: block; margin-top: 5px; color: #666;">
+                    Si décoché, trouve TOUS les contacts de l'équipe, peu importe leur poste
+                </small>
+            </div>
+
             <button type="button" class="btn" id="submitBtn" onclick="startScraping('simple')">
                 🚀 Lancer le scraping
             </button>
@@ -527,12 +544,14 @@ class ScraperHandler(BaseHTTPRequestHandler):
         const progressFill = document.getElementById('progressFill');
         const resultsDiv = document.getElementById('results');
         const scoreGroup = document.getElementById('scoreGroup');
+        const targetGroup = document.getElementById('targetGroup');
 
         let checkInterval;
 
-        // Show/hide score slider based on button hover
+        // Show/hide score slider and targeting checkbox based on button hover
         submitBtnPro.addEventListener('mouseenter', () => {
             scoreGroup.style.display = 'block';
+            targetGroup.style.display = 'block';
         });
 
         async function startScraping(mode) {
@@ -545,6 +564,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
 
             const maxResults = parseInt(document.getElementById('maxResults').value);
             const minScore = parseInt(document.getElementById('minScore').value);
+            const useAdaptiveTargeting = document.getElementById('useAdaptiveTargeting').checked;
 
             // Désactiver les boutons
             submitBtn.disabled = true;
@@ -565,7 +585,7 @@ class ScraperHandler(BaseHTTPRequestHandler):
             try {
                 const endpoint = mode === 'pro' ? '/api/start-pro' : '/api/start';
                 const body = mode === 'pro'
-                    ? { search_query: searchQuery, max_results: maxResults, min_score: minScore }
+                    ? { search_query: searchQuery, max_results: maxResults, min_score: minScore, use_adaptive_targeting: useAdaptiveTargeting }
                     : { search_query: searchQuery, max_results: maxResults };
 
                 const response = await fetch(endpoint, {
