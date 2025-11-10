@@ -83,6 +83,8 @@ if 'results' not in st.session_state:
     st.session_state.results = None
 if 'running' not in st.session_state:
     st.session_state.running = False
+if 'stop_requested' not in st.session_state:
+    st.session_state.stop_requested = False
 
 def render_header():
     """Affiche l'en-tête de l'application"""
@@ -184,12 +186,16 @@ def render_sidebar():
 def run_prospection(search_query, max_results):
     """Lance la prospection et affiche la progression"""
     st.session_state.running = True
+    st.session_state.stop_requested = False
 
     # Conteneur pour les messages de progression
     progress_container = st.container()
 
     with progress_container:
         st.info(f"🚀 Lancement de la prospection: **{search_query}**")
+
+        # Message d'information pour arrêter
+        st.caption("💡 Pour arrêter le processus, rechargez la page (Ctrl+R ou Cmd+R) ou cliquez sur 'Stop' en haut à droite de Streamlit.")
 
         # Barre de progression
         progress_bar = st.progress(0)
@@ -220,6 +226,11 @@ def run_prospection(search_query, max_results):
 
             enriched = []
             for idx, result in enumerate(raw_results):
+                # Vérifier si l'arrêt a été demandé
+                if st.session_state.stop_requested:
+                    st.warning(f"⏹️ Prospection arrêtée par l'utilisateur après {idx}/{len(raw_results)} entreprises enrichies.")
+                    break
+
                 # Mise à jour de la progression
                 progress = 40 + int((idx / len(raw_results)) * 50)
                 progress_bar.progress(progress)
