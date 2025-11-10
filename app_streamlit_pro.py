@@ -362,8 +362,28 @@ def render_contacts_table(contacts):
     """Affiche le tableau des contacts avec filtres"""
     st.subheader("📋 Liste complète des entreprises")
 
+    # Fonction pour déterminer la source du contact
+    def get_contact_source(contact):
+        """Détermine la source d'où vient le contact"""
+        data_sources = contact.get('data_sources', [])
+        has_contact = bool(contact.get('contact_name', '').strip())
+
+        if not has_contact:
+            return '❌ Non trouvé'
+
+        if 'dropcontact' in data_sources:
+            return '🎯 Dropcontact'
+        elif 'legal_data' in data_sources:
+            return '🏛️ Dirigeant légal (API gouv)'
+        elif 'website_team' in data_sources:
+            return '🌐 Site web'
+        elif 'api_entreprise' in data_sources:
+            return '📊 API entreprise.gouv'
+        else:
+            return '🔍 Autre source'
+
     # Filtres
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         filter_category = st.multiselect(
@@ -391,12 +411,21 @@ def render_contacts_table(contacts):
             key='filter_conf'
         )
 
+    with col4:
+        filter_source = st.multiselect(
+            "Source contact",
+            options=['🎯 Dropcontact', '🏛️ Dirigeant légal (API gouv)', '🌐 Site web', '📊 API entreprise.gouv', '❌ Non trouvé', '🔍 Autre source'],
+            default=['🎯 Dropcontact', '🏛️ Dirigeant légal (API gouv)', '🌐 Site web', '📊 API entreprise.gouv', '❌ Non trouvé', '🔍 Autre source'],
+            key='filter_source'
+        )
+
     # Filtrer les contacts
     filtered_contacts = [
         c for c in contacts
         if c.get('category') in filter_category
         and c.get('score_total', 0) >= filter_min_score
         and c.get('email_confidence', 'none').lower() in filter_confidence
+        and get_contact_source(c) in filter_source
     ]
 
     st.info(f"📊 **{len(filtered_contacts)}** contacts affichés sur {len(contacts)}")
@@ -410,7 +439,7 @@ def render_contacts_table(contacts):
         {
             'Score': f"{c.get('score_total', 0)} {c.get('emoji', '')}",
             'Catégorie': c.get('category', ''),
-            'Statut Contact': '✅ Contact trouvé' if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
+            'Source Contact': get_contact_source(c),
             'Entreprise': c.get('name', ''),
             'Contact': c.get('contact_name', '').strip() if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
             'Fonction': c.get('contact_position', '').strip() if c.get('contact_position', '').strip() else '-',
@@ -483,6 +512,40 @@ def main():
             with col3:
                 st.markdown("### 🏢 Score Entreprise")
                 st.info(f"Moyenne: {sum(c.get('score_company', 0) for c in results['enriched']) / len(results['enriched']):.1f}/30")
+
+            # Statistiques par source de contact
+            st.markdown("---")
+            st.markdown("### 📊 Statistiques par source de contact")
+
+            # Fonction pour déterminer la source (même que dans render_contacts_table)
+            def get_contact_source(contact):
+                data_sources = contact.get('data_sources', [])
+                has_contact = bool(contact.get('contact_name', '').strip())
+                if not has_contact:
+                    return '❌ Non trouvé'
+                if 'dropcontact' in data_sources:
+                    return '🎯 Dropcontact'
+                elif 'legal_data' in data_sources:
+                    return '🏛️ Dirigeant légal'
+                elif 'website_team' in data_sources:
+                    return '🌐 Site web'
+                elif 'api_entreprise' in data_sources:
+                    return '📊 API gouv'
+                else:
+                    return '🔍 Autre'
+
+            # Compter par source
+            sources_count = {}
+            for c in results['enriched']:
+                source = get_contact_source(c)
+                sources_count[source] = sources_count.get(source, 0) + 1
+
+            # Afficher dans des colonnes
+            cols = st.columns(len(sources_count))
+            for idx, (source, count) in enumerate(sorted(sources_count.items(), key=lambda x: x[1], reverse=True)):
+                with cols[idx]:
+                    pct = (count / len(results['enriched']) * 100)
+                    st.metric(source, count, f"{pct:.0f}%")
 
         with tab2:
             render_contacts_table(results['enriched'])
