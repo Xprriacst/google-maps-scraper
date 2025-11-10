@@ -1,0 +1,6 @@
+This file forces Streamlit Cloud to redeploy with the latest code.
+
+Timestamp: $(date)
+Commit: $(git log -1 --oneline)
+
+Please ensure DROPCONTACT_API_KEY is configured in Streamlit Cloud Secrets!

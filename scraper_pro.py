@@ -12,6 +12,7 @@ from apify_client import ApifyClient
 import gspread
 from google.oauth2.service_account import Credentials
 from typing import Dict, List
+import json
 
 from contact_enricher import ContactEnricher
 from contact_scorer import ContactScorer
@@ -32,15 +33,17 @@ class GoogleMapsScraperPro:
     4. Export contacts qualifiés uniquement
     """
 
-    def __init__(self, min_score: int = 50):
+    def __init__(self, min_score: int = 50, use_adaptive_targeting: bool = True, custom_job_titles: List[str] = None):
         """
         Initialise le scraper pro
 
         Args:
             min_score: Score minimum pour exporter un contact (défaut: 50)
+            use_adaptive_targeting: Utiliser le ciblage adaptatif selon la taille (défaut: True)
+            custom_job_titles: Liste personnalisée de job titles si ciblage manuel (ex: ["CEO", "Sales Director"])
         """
-        self.apify_token = os.getenv('APIFY_API_TOKEN')
-        self.google_sheet_id = os.getenv('GOOGLE_SHEET_ID')
+        self.apify_token = get_env('APIFY_API_TOKEN')
+        self.google_sheet_id = get_env('GOOGLE_SHEET_ID')
 
         # Vérifier les clés essentielles
         if not self.apify_token:
@@ -51,7 +54,10 @@ class GoogleMapsScraperPro:
         # Initialiser les clients
         self.apify_client = ApifyClient(self.apify_token)
         self.google_sheet = None
-        self.enricher = ContactEnricher()
+        self.enricher = ContactEnricher(
+            use_adaptive_targeting=use_adaptive_targeting,
+            custom_job_titles=custom_job_titles or []
+        )
         self.scorer = ContactScorer()
         self.db = DatabaseManager()  # Base de données pour le cache
         self.min_score = min_score
@@ -67,11 +73,17 @@ class GoogleMapsScraperPro:
                 'https://www.googleapis.com/auth/drive'
             ]
 
-            # Charger les credentials
-            creds = Credentials.from_service_account_file(
-                'credentials.json',
-                scopes=scopes
-            )
+            # Charger les credentials (compatible Streamlit Cloud et local)
+            gcp_creds = get_gcp_credentials()
+
+            if isinstance(gcp_creds, dict):
+                # Mode Streamlit Cloud : créer depuis dict
+                creds = Credentials.from_service_account_info(gcp_creds, scopes=scopes)
+            elif isinstance(gcp_creds, str):
+                # Mode local : charger depuis fichier
+                creds = Credentials.from_service_account_file(gcp_creds, scopes=scopes)
+            else:
+                raise FileNotFoundError("Credentials Google Cloud non trouvées")
 
             # Autoriser gspread
             gc = gspread.authorize(creds)

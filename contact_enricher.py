@@ -2,6 +2,11 @@
 """
 Module d'enrichissement de contacts pour la prospection B2B
 Trouve les décideurs, enrichit avec LinkedIn, APIs publiques et scraping avancé
+
+Stratégie d'enrichissement (v2.0) :
+1. API entreprise.data.gouv.fr → Données officielles (SIRET, CA, effectifs, dirigeant légal)
+2. Dropcontact → Décideur commercial + email vérifié
+3. Fallback → Dirigeant légal si Dropcontact ne trouve rien
 """
 
 import re
@@ -49,8 +54,20 @@ class ContactEnricher:
         'apprenti', 'apprentie',
     ]
 
-    def __init__(self):
-        """Initialise l'enrichisseur de contacts"""
+    def __init__(self, use_dropcontact: bool = True, use_apollo: bool = True,
+                 use_adaptive_targeting: bool = True, custom_job_titles: List[str] = None):
+        """
+        Initialise l'enrichisseur de contacts
+
+        Args:
+            use_dropcontact: Utiliser Dropcontact pour l'enrichissement (défaut: True)
+            use_apollo: Utiliser Apollo.io pour l'enrichissement (défaut: True, prioritaire)
+            use_adaptive_targeting: Adapter le ciblage selon la taille de l'entreprise (défaut: True)
+            custom_job_titles: Liste personnalisée de job titles si ciblage manuel (ex: ["CEO", "Sales Director"])
+        """
+        self.use_adaptive_targeting = use_adaptive_targeting
+        self.custom_job_titles = custom_job_titles or []
+
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -68,6 +85,76 @@ class ContactEnricher:
 
         # Cache pour éviter les appels répétés
         self.cache = {}
+
+        # Apollo enricher (prioritaire)
+        self.apollo = None
+        self.use_apollo = use_apollo
+
+        if use_apollo:
+            try:
+                from apollo_enricher import ApolloEnricher
+                from utils import get_env
+
+                api_key = get_env('APOLLO_API_KEY')
+                if api_key:
+                    self.apollo = ApolloEnricher(api_key)
+                    print("✅ Apollo.io activé")
+                else:
+                    print("⚠️  APOLLO_API_KEY non configurée - enrichissement sans Apollo")
+                    self.use_apollo = False
+            except Exception as e:
+                print(f"⚠️  Impossible d'initialiser Apollo: {e}")
+                self.use_apollo = False
+
+        # Dropcontact enricher (backup)
+        self.dropcontact = None
+        self.use_dropcontact = use_dropcontact
+
+        if use_dropcontact:
+            try:
+                from dropcontact_enricher import DropcontactEnricher
+                from utils import get_env
+
+                api_key = get_env('DROPCONTACT_API_KEY')
+                if api_key:
+                    self.dropcontact = DropcontactEnricher(api_key)
+                    print("✅ Dropcontact activé")
+                else:
+                    print("⚠️  DROPCONTACT_API_KEY non configurée - enrichissement sans Dropcontact")
+                    self.use_dropcontact = False
+            except Exception as e:
+                print(f"⚠️  Impossible d'initialiser Dropcontact: {e}")
+                self.use_dropcontact = False
+
+        # Company Size Estimator with AI (fallback quand données manquantes)
+        self.size_estimator = None
+        self.use_ai_estimation = False
+
+        try:
+            from company_size_estimator import CompanySizeEstimator
+            from utils import get_env
+
+            openai_key = get_env('OPENAI_API_KEY')
+            if openai_key:
+                self.size_estimator = CompanySizeEstimator(openai_key)
+                self.use_ai_estimation = True
+                print("✅ Estimation IA de taille activée")
+            else:
+                print("⚠️  OPENAI_API_KEY non configurée - estimation IA désactivée")
+        except Exception as e:
+            print(f"⚠️  Impossible d'initialiser l'estimation IA: {e}")
+
+        # Website Scraper (extraction emails depuis sites web)
+        self.website_scraper = None
+        self.use_website_scraping = True
+
+        try:
+            from website_scraper import WebsiteScraper
+            self.website_scraper = WebsiteScraper(timeout=10, max_pages=3)
+            print("✅ Scraping web activé")
+        except Exception as e:
+            print(f"⚠️  Impossible d'initialiser le scraping web: {e}")
+            self.use_website_scraping = False
 
     def extract_domain(self, website: str) -> Optional[str]:
         """
@@ -295,9 +382,35 @@ class ContactEnricher:
         if len(words) < 2:
             return False
 
-        # Chaque mot doit commencer par une majuscule
+        # Mots à exclure (articles, prépositions, etc.)
+        excluded_words = {
+            'de', 'la', 'le', 'du', 'des', 'et', 'ou', 'à', 'au', 'aux',
+            'en', 'pour', 'par', 'sur', 'dans', 'avec', 'sans', 'nous',
+            'notre', 'votre', 'leur', 'son', 'sa', 'ses', 'un', 'une'
+        }
+
+        # Vérifier que les mots ne sont pas des mots exclus
+        valid_words = []
         for word in words:
-            if not word[0].isupper():
+            # Ignorer les mots trop courts (< 3 caractères) sauf si majuscule
+            if len(word) < 3:
+                continue
+
+            # Exclure les mots français courants
+            if word.lower() in excluded_words:
+                continue
+
+            # Le mot doit commencer par une majuscule
+            if word[0].isupper():
+                valid_words.append(word)
+
+        # Il faut au moins 2 mots valides pour un nom complet
+        if len(valid_words) < 2:
+            return False
+
+        # Vérifier que les mots valides contiennent au moins 3 lettres chacun
+        for word in valid_words:
+            if len(word) < 3:
                 return False
 
         return True
@@ -592,6 +705,25 @@ class ContactEnricher:
             'contact_phone': '',
             'contact_linkedin': '',
             'email_confidence': 'none',
+            # Contacts 1-3
+            'contact_1_name': '',
+            'contact_1_position': '',
+            'contact_1_email': '',
+            'contact_1_phone': '',
+            'contact_1_linkedin': '',
+            'contact_1_email_confidence': 'none',
+            'contact_2_name': '',
+            'contact_2_position': '',
+            'contact_2_email': '',
+            'contact_2_phone': '',
+            'contact_2_linkedin': '',
+            'contact_2_email_confidence': 'none',
+            'contact_3_name': '',
+            'contact_3_position': '',
+            'contact_3_email': '',
+            'contact_3_phone': '',
+            'contact_3_linkedin': '',
+            'contact_3_email_confidence': 'none',
 
             # Entreprise
             'siret': '',
@@ -603,7 +735,8 @@ class ContactEnricher:
 
             # Métadonnées
             'enrichment_date': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'data_sources': []
+            'data_sources': [],
+            'enrichment_logs': []  # Logs d'enrichissement
         }
 
         # 0. Générer les emails génériques et scrapés (Contacts 1 & 2)
@@ -659,16 +792,143 @@ class ContactEnricher:
 
         enriched['siret'] = api_data['siret']
         enriched['siren'] = api_data['siren']
-        enriched['legal_form'] = api_data['legal_form']
-        enriched['revenue'] = api_data['revenue']
-        enriched['employees'] = api_data['employees']
+        # Ne pas écraser les données Apollo si elles existent
+        if not enriched.get('legal_form'):
+            enriched['legal_form'] = api_data['legal_form']
+        if not enriched.get('employees'):
+            enriched['employees'] = api_data['employees']
+        if not enriched.get('revenue'):
+            enriched['revenue'] = api_data['revenue']
         enriched['creation_date'] = api_data['creation_date']
 
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
+            enriched['enrichment_logs'].append(f"✅ API gouv: SIRET {enriched['siret'][:8]}...")
+        else:
+            enriched['enrichment_logs'].append("⚠️ API gouv: Aucune donnée")
+
+        # 1.6 FALLBACK IA: Estimer la taille si toujours inconnue
+        if not enriched.get('employees') and self.use_ai_estimation and self.size_estimator:
+            print("  🤖 Étape 1.6/3: Estimation IA de la taille...")
+            try:
+                ai_result = self.size_estimator.estimate_size(
+                    company_name=company_name,
+                    website=website,
+                    category=None
+                )
+
+                if ai_result and ai_result.get('employees_estimated', 0) > 0:
+                    enriched['employees'] = str(ai_result['employees_estimated'])
+                    enriched['data_sources'].append('ai_estimated')
+                    enriched['enrichment_logs'].append(f"🤖 IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+                    print(f"  ✅ Taille estimée par IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ IA: Aucune estimation")
+            except Exception as e:
+                print(f"  ⚠️  Erreur estimation IA: {e}")
+                enriched['enrichment_logs'].append(f"❌ IA: {str(e)[:50]}")
+
+        # 2. Parser le nombre d'employés pour ciblage adaptatif
+        employees_count = 0
+        if enriched['employees']:
+            try:
+                employees_str = str(enriched['employees']).split('-')[0].strip()
+                employees_count = int(employees_str) if employees_str.isdigit() else 0
+            except:
+                employees_count = 0
+
+        # 2.1 PRIORITÉ: Apollo pour les contacts
+        contacts_found = False
+        if self.use_apollo and self.apollo:
+            print("  👥 Étape 2/3: Apollo.io (recherche contacts)...")
+            try:
+                # Définir les titres recherchés
+                if self.use_adaptive_targeting:
+                    # Ciblage adaptatif selon la taille
+                    if employees_count <= 250:  # TPE/PME
+                        job_titles = ["CEO", "Managing Director", "Founder", "President", "Gérant"]
+                        print(f"     🎯 Ciblage adaptatif: Dirigeants (TPE/PME)")
+                    else:  # ETI/GE
+                        job_titles = ["Sales Director", "Business Development", "Purchasing Director", "Marketing Director"]
+                        print(f"     🎯 Ciblage adaptatif: Directeurs opérationnels (ETI/GE)")
+                else:
+                    # Ciblage manuel avec les job titles personnalisés
+                    job_titles = self.custom_job_titles
+                    print(f"     🎯 Ciblage manuel: {len(job_titles)} job title(s) personnalisé(s)")
+
+                apollo_contacts = self.apollo.search_people(
+                    company_name=company_name,
+                    website=website,
+                    job_titles=job_titles,
+                    max_contacts=3
+                )
+
+                if apollo_contacts and len(apollo_contacts) > 0:
+                    # Remplir les 3 contacts
+                    for i, contact in enumerate(apollo_contacts[:3], 1):
+                        enriched[f'contact_{i}_name'] = contact.get('name', '')
+                        enriched[f'contact_{i}_position'] = contact.get('title', '')
+                        enriched[f'contact_{i}_email'] = contact.get('email', '')
+                        enriched[f'contact_{i}_phone'] = contact.get('phone', '')
+                        enriched[f'contact_{i}_linkedin'] = contact.get('linkedin_url', '')
+                        enriched[f'contact_{i}_email_confidence'] = 'high' if contact.get('email_status') == 'verified' else 'medium'
+
+                    # Compatibilité avec l'ancien format
+                    enriched['contact_name'] = apollo_contacts[0].get('name', '')
+                    enriched['contact_position'] = apollo_contacts[0].get('title', '')
+                    enriched['contact_email'] = apollo_contacts[0].get('email', '')
+                    enriched['contact_phone'] = apollo_contacts[0].get('phone', '')
+                    enriched['contact_linkedin'] = apollo_contacts[0].get('linkedin_url', '')
+                    enriched['email_confidence'] = 'high' if apollo_contacts[0].get('email_status') == 'verified' else 'medium'
+                    enriched['data_sources'].append('apollo')
+                    contacts_found = True
+                    enriched['enrichment_logs'].append(f"✅ Apollo contacts: {len(apollo_contacts)} contact(s)")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ Apollo contacts: Aucun contact")
+            except Exception as e:
+                print(f"  ⚠️  Erreur Apollo contacts: {e}")
+                enriched['enrichment_logs'].append(f"❌ Apollo contacts: {str(e)[:50]}")
+
+        # 2.2 FALLBACK: Dropcontact si Apollo n'a pas trouvé de contacts
+        if not contacts_found and self.use_dropcontact and self.dropcontact:
+            print("  🎯 Étape 2.5/3: Dropcontact (fallback recherche adaptée)...")
+
+            try:
+                # Déterminer les rôles cibles pour Dropcontact
+                force_roles = None
+                if not self.use_adaptive_targeting and self.custom_job_titles:
+                    # Ciblage manuel: utiliser les job titles personnalisés
+                    force_roles = self.custom_job_titles
+
+                dropcontact_result = self.dropcontact.enrich_contact(
+                    company_name=company_name,
+                    website=website,
+                    company_siret=enriched['siret'],
+                    employees=employees_count,
+                    force_target_roles=force_roles
+                )
+
+                # Copier tous les champs de contact (incluant contact_1, contact_2, contact_3)
+                for key, value in dropcontact_result.items():
+                    if key.startswith('contact') or key == 'email_confidence' or key == 'data_sources':
+                        if key == 'data_sources':
+                            enriched[key].extend(value)
+                        else:
+                            enriched[key] = value
+
+                if dropcontact_result.get('contact_name'):
+                    contacts_found = True
+                    enriched['enrichment_logs'].append(f"✅ Dropcontact: Contact trouvé")
+                else:
+                    enriched['enrichment_logs'].append("⚠️ Dropcontact: Aucun contact")
+
+            except Exception as e:
+                print(f"  ⚠️  Erreur Dropcontact: {e}")
+                enriched['enrichment_logs'].append(f"❌ Dropcontact: {str(e)[:50]}")
 
         # Si on n'a pas trouvé de contact sur le site, utiliser le dirigeant légal (Contact 3)
         if not enriched['contact_name'] and api_data['legal_manager']:
+            print("  🔄 Fallback: Utilisation du dirigeant légal...")
             enriched['contact_name'] = api_data['legal_manager']
             enriched['contact_position'] = api_data['legal_manager_position'] or 'Gérant'
             enriched['data_sources'].append('legal_data')

@@ -64,6 +64,7 @@ cp .env.example .env
    - **GOOGLE_SHEET_ID** : L'ID de votre Google Sheet
    - **GOHIGHLEVEL_API_KEY** : Votre clé API GoHighLevel
    - **GOHIGHLEVEL_LOCATION_ID** : Votre Location ID GoHighLevel
+   - **DROPCONTACT_API_KEY** : (Recommandé) Votre clé API Dropcontact pour l'enrichissement décideurs B2B - Taux de succès 60-80% (https://www.dropcontact.com/api)
    - **HUNTER_API_KEY** : (Optionnel) Votre clé API Hunter.io pour la recherche de contacts
 
 4. Configurer Google Sheets :
@@ -75,7 +76,25 @@ cp .env.example .env
 
 ### 🚀 Mode Prospection B2B Pro (Recommandé)
 
-**Interface interactive complète avec enrichissement et scoring automatique**
+**Interface web Streamlit moderne (🆕 Nouveau !)**
+
+```bash
+streamlit run app_streamlit_pro.py
+```
+
+Cette interface offre :
+- 🎨 Interface web moderne et intuitive
+- 📊 Visualisations en temps réel (graphiques, tableaux)
+- 🔍 Configuration guidée (recherche, nombre, score min)
+- ⭐ Système de scoring automatique (0-100)
+- 📈 Graphiques interactifs (distribution scores, catégories)
+- 🔎 Filtres dynamiques (score, catégorie, confiance email)
+- 📥 Export CSV avec un clic
+- 🌐 **Déployable en ligne sur Streamlit Cloud (gratuit)**
+
+📖 **[Guide de déploiement Streamlit Cloud](DEPLOYMENT.md)**
+
+**Interface CLI interactive**
 
 ```bash
 python3 app_prospection.py
