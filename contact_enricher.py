@@ -54,12 +54,13 @@ class ContactEnricher:
         'apprenti', 'apprentie',
     ]
 
-    def __init__(self, use_dropcontact: bool = True):
+    def __init__(self, use_dropcontact: bool = True, use_apollo: bool = True):
         """
         Initialise l'enrichisseur de contacts
 
         Args:
             use_dropcontact: Utiliser Dropcontact pour l'enrichissement (défaut: True)
+            use_apollo: Utiliser Apollo.io pour l'enrichissement (défaut: True, prioritaire)
         """
         self.session = requests.Session()
         self.session.headers.update({
@@ -79,7 +80,27 @@ class ContactEnricher:
         # Cache pour éviter les appels répétés
         self.cache = {}
 
-        # Dropcontact enricher (optionnel)
+        # Apollo enricher (prioritaire)
+        self.apollo = None
+        self.use_apollo = use_apollo
+
+        if use_apollo:
+            try:
+                from apollo_enricher import ApolloEnricher
+                from utils import get_env
+
+                api_key = get_env('APOLLO_API_KEY')
+                if api_key:
+                    self.apollo = ApolloEnricher(api_key)
+                    print("✅ Apollo.io activé")
+                else:
+                    print("⚠️  APOLLO_API_KEY non configurée - enrichissement sans Apollo")
+                    self.use_apollo = False
+            except Exception as e:
+                print(f"⚠️  Impossible d'initialiser Apollo: {e}")
+                self.use_apollo = False
+
+        # Dropcontact enricher (backup)
         self.dropcontact = None
         self.use_dropcontact = use_dropcontact
 
@@ -633,13 +654,32 @@ class ContactEnricher:
         print(f"\n🔍 Enrichissement: {company_name}")
 
         enriched = {
-            # Contact
+            # Contact principal (compatibilité)
             'contact_name': '',
             'contact_position': '',
             'contact_email': '',
             'contact_phone': '',
             'contact_linkedin': '',
             'email_confidence': 'none',
+            # Contacts 1-3
+            'contact_1_name': '',
+            'contact_1_position': '',
+            'contact_1_email': '',
+            'contact_1_phone': '',
+            'contact_1_linkedin': '',
+            'contact_1_email_confidence': 'none',
+            'contact_2_name': '',
+            'contact_2_position': '',
+            'contact_2_email': '',
+            'contact_2_phone': '',
+            'contact_2_linkedin': '',
+            'contact_2_email_confidence': 'none',
+            'contact_3_name': '',
+            'contact_3_position': '',
+            'contact_3_email': '',
+            'contact_3_phone': '',
+            'contact_3_linkedin': '',
+            'contact_3_email_confidence': 'none',
 
             # Entreprise
             'siret': '',
@@ -654,55 +694,93 @@ class ContactEnricher:
             'data_sources': []
         }
 
-        # 1. Enrichir avec l'API entreprise.data.gouv.fr (données officielles)
-        print("  📊 Étape 1/2: API entreprise.data.gouv.fr...")
+        # 1. PRIORITÉ: Enrichir avec Apollo.io (meilleure base de données B2B)
+        apollo_org_data = None
+        if self.use_apollo and self.apollo:
+            print("  🚀 Étape 1/3: Apollo.io (enrichissement entreprise)...")
+            try:
+                apollo_org_data = self.apollo.enrich_organization(company_name, website)
+
+                if apollo_org_data and apollo_org_data.get('company_name'):
+                    enriched['employees'] = str(apollo_org_data.get('employees', ''))
+                    enriched['revenue'] = apollo_org_data.get('revenue', '')
+                    enriched['legal_form'] = apollo_org_data.get('industry', '')
+                    enriched['data_sources'].extend(apollo_org_data.get('data_sources', []))
+                else:
+                    print("  ⚠️  Apollo: Aucune donnée entreprise trouvée, fallback sur API gouv")
+            except Exception as e:
+                print(f"  ⚠️  Erreur Apollo: {e}")
+
+        # 1.5 FALLBACK: API entreprise.data.gouv.fr (toujours appeler pour SIRET)
+        print("  📊 Étape 1.5/3: API entreprise.data.gouv.fr (SIRET)...")
         api_data = self.enrich_with_api(company_name, website, address)
 
         enriched['siret'] = api_data['siret']
         enriched['siren'] = api_data['siren']
-        enriched['legal_form'] = api_data['legal_form']
-        enriched['revenue'] = api_data['revenue']
-        enriched['employees'] = api_data['employees']
+        # Ne pas écraser les données Apollo si elles existent
+        if not enriched.get('legal_form'):
+            enriched['legal_form'] = api_data['legal_form']
+        if not enriched.get('employees'):
+            enriched['employees'] = api_data['employees']
+        if not enriched.get('revenue'):
+            enriched['revenue'] = api_data['revenue']
         enriched['creation_date'] = api_data['creation_date']
 
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
 
-        # 1.5 Si pas d'effectifs, estimation IA de la taille
-        if not enriched['employees'] or enriched['employees'] == '':
+        # 2. Parser le nombre d'employés pour ciblage adaptatif
+        employees_count = 0
+        if enriched['employees']:
             try:
-                from company_size_estimator import CompanySizeEstimator
-                estimator = CompanySizeEstimator()
+                employees_str = str(enriched['employees']).split('-')[0].strip()
+                employees_count = int(employees_str) if employees_str.isdigit() else 0
+            except:
+                employees_count = 0
 
-                if estimator.enabled:
-                    print("  🤖 Étape 1.5/2: Estimation IA de la taille...")
-                    ai_result = estimator.estimate_size(
-                        company_name=company_name,
-                        website=website,
-                        description=enriched.get('legal_form', ''),
-                        category=''
-                    )
+        # 2.1 PRIORITÉ: Apollo pour les contacts
+        contacts_found = False
+        if self.use_apollo and self.apollo:
+            print("  👥 Étape 2/3: Apollo.io (recherche contacts)...")
+            try:
+                # Définir les titres recherchés selon la taille
+                if employees_count <= 250:  # TPE/PME
+                    job_titles = ["CEO", "Managing Director", "Founder", "President", "Gérant"]
+                else:  # ETI/GE
+                    job_titles = ["Sales Director", "Business Development", "Purchasing Director", "Marketing Director"]
 
-                    if ai_result['employees_estimated'] > 0:
-                        enriched['employees'] = str(ai_result['employees_estimated'])
-                        enriched['data_sources'].append('ai_estimated')
-                        print(f"  ✅ Taille estimée par IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+                apollo_contacts = self.apollo.search_people(
+                    company_name=company_name,
+                    website=website,
+                    job_titles=job_titles,
+                    max_contacts=3
+                )
+
+                if apollo_contacts and len(apollo_contacts) > 0:
+                    # Remplir les 3 contacts
+                    for i, contact in enumerate(apollo_contacts[:3], 1):
+                        enriched[f'contact_{i}_name'] = contact.get('name', '')
+                        enriched[f'contact_{i}_position'] = contact.get('title', '')
+                        enriched[f'contact_{i}_email'] = contact.get('email', '')
+                        enriched[f'contact_{i}_phone'] = contact.get('phone', '')
+                        enriched[f'contact_{i}_linkedin'] = contact.get('linkedin_url', '')
+                        enriched[f'contact_{i}_email_confidence'] = 'high' if contact.get('email_status') == 'verified' else 'medium'
+
+                    # Compatibilité avec l'ancien format
+                    enriched['contact_name'] = apollo_contacts[0].get('name', '')
+                    enriched['contact_position'] = apollo_contacts[0].get('title', '')
+                    enriched['contact_email'] = apollo_contacts[0].get('email', '')
+                    enriched['contact_phone'] = apollo_contacts[0].get('phone', '')
+                    enriched['contact_linkedin'] = apollo_contacts[0].get('linkedin_url', '')
+                    enriched['email_confidence'] = 'high' if apollo_contacts[0].get('email_status') == 'verified' else 'medium'
+                    enriched['data_sources'].append('apollo')
+                    contacts_found = True
             except Exception as e:
-                print(f"  ⚠️  Erreur estimation IA: {e}")
+                print(f"  ⚠️  Erreur Apollo contacts: {e}")
 
-        # 2. Chercher le décideur avec Dropcontact (adapté selon la taille)
-        if self.use_dropcontact and self.dropcontact:
-            # Parser le nombre d'employés
-            employees_count = 0
-            if enriched['employees']:
-                try:
-                    # Extraire le nombre (peut être "50" ou "10-20" ou "50-100")
-                    employees_str = str(enriched['employees']).split('-')[0].strip()
-                    employees_count = int(employees_str) if employees_str.isdigit() else 0
-                except:
-                    employees_count = 0
-
-            print("  🎯 Étape 2/2: Dropcontact (recherche adaptée)...")
+        # 2.2 FALLBACK: Dropcontact si Apollo n'a pas trouvé de contacts
+        if not contacts_found and self.use_dropcontact and self.dropcontact:
+            print("  🎯 Étape 2.5/3: Dropcontact (fallback recherche adaptée)...")
 
             try:
                 dropcontact_result = self.dropcontact.enrich_contact(
@@ -712,20 +790,19 @@ class ContactEnricher:
                     employees=employees_count
                 )
 
-                # Si Dropcontact a trouvé un contact
-                if dropcontact_result['contact_name']:
-                    enriched['contact_name'] = dropcontact_result['contact_name']
-                    enriched['contact_position'] = dropcontact_result['contact_position']
-                    enriched['contact_email'] = dropcontact_result['contact_email']
-                    enriched['contact_phone'] = dropcontact_result['contact_phone']
-                    enriched['contact_linkedin'] = dropcontact_result['contact_linkedin']
-                    enriched['email_confidence'] = dropcontact_result['email_confidence']
-                    enriched['data_sources'].extend(dropcontact_result['data_sources'])
+                # Copier tous les champs de contact (incluant contact_1, contact_2, contact_3)
+                for key, value in dropcontact_result.items():
+                    if key.startswith('contact') or key == 'email_confidence' or key == 'data_sources':
+                        if key == 'data_sources':
+                            enriched[key].extend(value)
+                        else:
+                            enriched[key] = value
+
+                if dropcontact_result.get('contact_name'):
+                    contacts_found = True
 
             except Exception as e:
                 print(f"  ⚠️  Erreur Dropcontact: {e}")
-        else:
-            print("  ⏭️  Étape 2/2: Dropcontact désactivé - utilisation du dirigeant légal")
 
         # 3. Fallback: utiliser le dirigeant légal si aucun contact trouvé
         if not enriched['contact_name'] and api_data['legal_manager']:
