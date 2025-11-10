@@ -180,12 +180,20 @@ class DropcontactEnricher:
                 self.stats['no_contact'] += 1
                 return self._empty_result()
 
-            # Extraire le meilleur décideur avec les rôles ciblés
+            # Extraire les 3 meilleurs décideurs avec les rôles ciblés
             contact = self._extract_best_contact(enriched_data, target_roles)
 
-            if contact['contact_name']:
-                print(f"  ✅ Contact trouvé: {contact['contact_name']} ({contact['contact_position']})")
-                print(f"     Email: {contact['contact_email']} (vérifié)")
+            # Compter combien de contacts ont été trouvés
+            contacts_found = sum(1 for i in range(1, 4) if contact.get(f'contact_{i}_name', '').strip())
+
+            if contacts_found > 0:
+                print(f"  ✅ {contacts_found} contact(s) trouvé(s):")
+                for i in range(1, contacts_found + 1):
+                    name = contact.get(f'contact_{i}_name', '')
+                    position = contact.get(f'contact_{i}_position', '')
+                    email = contact.get(f'contact_{i}_email', '')
+                    if name:
+                        print(f"     {i}. {name} ({position}) - {email}")
                 self.stats['success'] += 1
             else:
                 print(f"  ❌ Aucun contact décideur trouvé")
@@ -244,14 +252,14 @@ class DropcontactEnricher:
 
     def _extract_best_contact(self, data: Dict, target_roles: List[str] = None) -> Dict:
         """
-        Extrait le meilleur contact décideur des résultats Dropcontact
+        Extrait les 3 meilleurs contacts décideurs des résultats Dropcontact
 
         Args:
             data: Données enrichies de Dropcontact
             target_roles: Liste des rôles à prioriser (par défaut: ROLES_TPE_PME)
 
         Returns:
-            Dict avec les infos du meilleur contact
+            Dict avec les infos des 3 meilleurs contacts (+ compatibilité avec le contact principal)
         """
         if target_roles is None:
             target_roles = self.ROLES_TPE_PME
@@ -262,6 +270,25 @@ class DropcontactEnricher:
             'contact_phone': '',
             'contact_linkedin': '',
             'email_confidence': 'none',
+            # Contacts 1-3
+            'contact_1_name': '',
+            'contact_1_position': '',
+            'contact_1_email': '',
+            'contact_1_phone': '',
+            'contact_1_linkedin': '',
+            'contact_1_email_confidence': 'none',
+            'contact_2_name': '',
+            'contact_2_position': '',
+            'contact_2_email': '',
+            'contact_2_phone': '',
+            'contact_2_linkedin': '',
+            'contact_2_email_confidence': 'none',
+            'contact_3_name': '',
+            'contact_3_position': '',
+            'contact_3_email': '',
+            'contact_3_phone': '',
+            'contact_3_linkedin': '',
+            'contact_3_email_confidence': 'none',
             'data_sources': []
         }
 
@@ -321,36 +348,49 @@ class DropcontactEnricher:
         # Trier par score décroissant
         scored_contacts.sort(key=lambda x: x['score'], reverse=True)
 
-        # Prendre le meilleur contact
-        if scored_contacts and scored_contacts[0]['score'] > 0:
-            best = scored_contacts[0]['contact']
+        # Prendre les 3 meilleurs contacts
+        result['data_sources'].append('dropcontact')
 
-            # Construire le nom complet
-            first_name = best.get('first_name', '')
-            last_name = best.get('last_name', '')
-            full_name = f"{first_name} {last_name}".strip()
+        for i in range(min(3, len(scored_contacts))):
+            if scored_contacts[i]['score'] > 0:
+                contact = scored_contacts[i]['contact']
+                contact_num = i + 1
 
-            result['contact_name'] = full_name or best.get('full_name', '')
-            result['contact_position'] = best.get('job', '') or best.get('job_title', '')
-            result['contact_email'] = best.get('email', '')
-            result['contact_phone'] = best.get('phone', '') or best.get('mobile_phone', '')
-            result['contact_linkedin'] = best.get('linkedin', '')
+                # Construire le nom complet
+                first_name = contact.get('first_name', '')
+                last_name = contact.get('last_name', '')
+                full_name = f"{first_name} {last_name}".strip()
 
-            # Confiance basée sur la vérification email
-            email_status = best.get('email_status', '').lower()
-            if email_status in ['valid', 'verified', 'deliverable']:
-                result['email_confidence'] = 'high'
-            elif email_status == 'risky':
-                result['email_confidence'] = 'medium'
-            else:
-                result['email_confidence'] = 'low'
+                result[f'contact_{contact_num}_name'] = full_name or contact.get('full_name', '')
+                result[f'contact_{contact_num}_position'] = contact.get('job', '') or contact.get('job_title', '')
+                result[f'contact_{contact_num}_email'] = contact.get('email', '')
+                result[f'contact_{contact_num}_phone'] = contact.get('phone', '') or contact.get('mobile_phone', '')
+                result[f'contact_{contact_num}_linkedin'] = contact.get('linkedin', '')
 
-            result['data_sources'].append('dropcontact')
+                # Confiance basée sur la vérification email
+                email_status = contact.get('email_status', '').lower()
+                if email_status in ['valid', 'verified', 'deliverable']:
+                    confidence = 'high'
+                elif email_status == 'risky':
+                    confidence = 'medium'
+                else:
+                    confidence = 'low'
+                result[f'contact_{contact_num}_email_confidence'] = confidence
+
+        # Garder la compatibilité : contact_name = contact_1_name
+        if 'contact_1_name' in result:
+            result['contact_name'] = result['contact_1_name']
+            result['contact_position'] = result['contact_1_position']
+            result['contact_email'] = result['contact_1_email']
+            result['contact_phone'] = result['contact_1_phone']
+            result['contact_linkedin'] = result['contact_1_linkedin']
+            result['email_confidence'] = result['contact_1_email_confidence']
+
 
         return result
 
     def _empty_result(self) -> Dict:
-        """Retourne un résultat vide"""
+        """Retourne un résultat vide avec tous les champs initialisés"""
         return {
             'contact_name': '',
             'contact_position': '',
@@ -358,6 +398,25 @@ class DropcontactEnricher:
             'contact_phone': '',
             'contact_linkedin': '',
             'email_confidence': 'none',
+            # Contacts 1-3
+            'contact_1_name': '',
+            'contact_1_position': '',
+            'contact_1_email': '',
+            'contact_1_phone': '',
+            'contact_1_linkedin': '',
+            'contact_1_email_confidence': 'none',
+            'contact_2_name': '',
+            'contact_2_position': '',
+            'contact_2_email': '',
+            'contact_2_phone': '',
+            'contact_2_linkedin': '',
+            'contact_2_email_confidence': 'none',
+            'contact_3_name': '',
+            'contact_3_position': '',
+            'contact_3_email': '',
+            'contact_3_phone': '',
+            'contact_3_linkedin': '',
+            'contact_3_email_confidence': 'none',
             'data_sources': []
         }
 

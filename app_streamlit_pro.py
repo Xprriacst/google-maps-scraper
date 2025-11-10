@@ -470,10 +470,19 @@ def render_contacts_table(contacts):
             'Source Contact': get_contact_source(c),
             'Taille': get_company_size(c),
             'Entreprise': c.get('name', ''),
-            'Contact': c.get('contact_name', '').strip() if c.get('contact_name', '').strip() else '❌ Aucun contact trouvé',
-            'Fonction': c.get('contact_position', '').strip() if c.get('contact_position', '').strip() else '-',
-            'Email': c.get('contact_email', '').strip() if c.get('contact_email', '').strip() else '-',
-            'Confiance': c.get('email_confidence', 'none').upper() if c.get('contact_email', '').strip() else '-',
+            # Contact 1 (principal)
+            'Contact 1': c.get('contact_1_name', '').strip() if c.get('contact_1_name', '').strip() else '❌',
+            'Fonction 1': c.get('contact_1_position', '').strip() if c.get('contact_1_position', '').strip() else '-',
+            'Email 1': c.get('contact_1_email', '').strip() if c.get('contact_1_email', '').strip() else '-',
+            # Contact 2
+            'Contact 2': c.get('contact_2_name', '').strip() if c.get('contact_2_name', '').strip() else '-',
+            'Fonction 2': c.get('contact_2_position', '').strip() if c.get('contact_2_position', '').strip() else '-',
+            'Email 2': c.get('contact_2_email', '').strip() if c.get('contact_2_email', '').strip() else '-',
+            # Contact 3
+            'Contact 3': c.get('contact_3_name', '').strip() if c.get('contact_3_name', '').strip() else '-',
+            'Fonction 3': c.get('contact_3_position', '').strip() if c.get('contact_3_position', '').strip() else '-',
+            'Email 3': c.get('contact_3_email', '').strip() if c.get('contact_3_email', '').strip() else '-',
+            # Autres infos
             'Téléphone': c.get('phone', 'N/A'),
             'Site web': c.get('website', 'N/A'),
             'Note': f"{c.get('rating', 'N/A')} ⭐",
