@@ -120,6 +120,24 @@ class ContactEnricher:
                 print(f"⚠️  Impossible d'initialiser Dropcontact: {e}")
                 self.use_dropcontact = False
 
+        # Company Size Estimator with AI (fallback quand données manquantes)
+        self.size_estimator = None
+        self.use_ai_estimation = False
+
+        try:
+            from company_size_estimator import CompanySizeEstimator
+            from utils import get_env
+
+            openai_key = get_env('OPENAI_API_KEY')
+            if openai_key:
+                self.size_estimator = CompanySizeEstimator(openai_key)
+                self.use_ai_estimation = True
+                print("✅ Estimation IA de taille activée")
+            else:
+                print("⚠️  OPENAI_API_KEY non configurée - estimation IA désactivée")
+        except Exception as e:
+            print(f"⚠️  Impossible d'initialiser l'estimation IA: {e}")
+
     def extract_domain(self, website: str) -> Optional[str]:
         """
         Extrait le domaine propre d'une URL
@@ -728,6 +746,23 @@ class ContactEnricher:
 
         if api_data['api_source']:
             enriched['data_sources'].append(api_data['api_source'])
+
+        # 1.6 FALLBACK IA: Estimer la taille si toujours inconnue
+        if not enriched.get('employees') and self.use_ai_estimation and self.size_estimator:
+            print("  🤖 Étape 1.6/3: Estimation IA de la taille...")
+            try:
+                ai_result = self.size_estimator.estimate_size(
+                    company_name=company_name,
+                    website=website,
+                    category=None
+                )
+
+                if ai_result and ai_result.get('employees_estimated', 0) > 0:
+                    enriched['employees'] = str(ai_result['employees_estimated'])
+                    enriched['data_sources'].append('ai_estimated')
+                    print(f"  ✅ Taille estimée par IA: {ai_result['employees_estimated']} employés ({ai_result['size_category']})")
+            except Exception as e:
+                print(f"  ⚠️  Erreur estimation IA: {e}")
 
         # 2. Parser le nombre d'employés pour ciblage adaptatif
         employees_count = 0

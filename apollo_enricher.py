@@ -37,7 +37,8 @@ class ApolloEnricher:
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache'
+            'Cache-Control': 'no-cache',
+            'X-Api-Key': self.api_key  # Apollo attend la clé dans les headers
         })
 
         # Statistiques
@@ -81,10 +82,8 @@ class ApolloEnricher:
         try:
             self.stats['requests'] += 1
 
-            # Construire la requête
-            payload = {
-                'api_key': self.api_key,
-            }
+            # Construire la requête (api_key dans headers, pas dans payload)
+            payload = {}
 
             # Rechercher par domaine (plus précis) ou par nom
             if website:
@@ -102,7 +101,14 @@ class ApolloEnricher:
             )
 
             if response.status_code != 200:
+                error_msg = response.text
                 print(f"  ⚠️  Apollo API error: {response.status_code}")
+                try:
+                    error_data = response.json()
+                    if 'error' in error_data:
+                        print(f"      Message: {error_data['error']}")
+                except:
+                    pass
                 self.stats['errors'] += 1
                 return result
 
@@ -168,9 +174,8 @@ class ApolloEnricher:
         try:
             self.stats['requests'] += 1
 
-            # Construire la requête de recherche
+            # Construire la requête de recherche (api_key dans headers)
             payload = {
-                'api_key': self.api_key,
                 'page': 1,
                 'per_page': max_contacts,
                 'organization_names': [company_name]
@@ -189,6 +194,12 @@ class ApolloEnricher:
 
             if response.status_code != 200:
                 print(f"  ⚠️  Apollo People API error: {response.status_code}")
+                try:
+                    error_data = response.json()
+                    if 'error' in error_data:
+                        print(f"      Message: {error_data['error']}")
+                except:
+                    pass
                 self.stats['errors'] += 1
                 return contacts
 
