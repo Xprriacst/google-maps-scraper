@@ -168,9 +168,9 @@ TEXTE À ANALYSER:
 
 Réponds UNIQUEMENT avec le JSON, sans texte avant ou après."""
 
-            # Appel à GPT-5
+            # Appel à GPT-5-mini
             response = self.client.chat.completions.create(
-                model="gpt-5",  # GPT-5 (novembre 2025)
+                model="gpt-5-mini",  # GPT-5-mini (novembre 2025)
                 messages=[
                     {"role": "system", "content": "Tu es un expert en extraction de données B2B. Tu réponds uniquement en JSON valide."},
                     {"role": "user", "content": prompt}
