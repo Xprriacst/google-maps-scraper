@@ -83,7 +83,10 @@ def main():
             else:
                 with st.spinner(f"🔄 Scraping de {max_results} entreprises..."):
                     try:
+                        st.info("🔄 Initialisation du scraper...")
                         scraper = TwoStepScraper()
+                        st.success("✅ Scraper initialisé (Google Sheets connecté)")
+
                         companies = scraper.scrape_companies(
                             search_query=search_query,
                             max_results=max_results,
@@ -101,6 +104,9 @@ def main():
 
                     except Exception as e:
                         st.error(f"❌ Erreur: {e}")
+                        import traceback
+                        with st.expander("🔍 Détails de l'erreur"):
+                            st.code(traceback.format_exc())
 
     # === ÉTAPE 2 : PEOPLE ===
     with col2:
