@@ -24,6 +24,16 @@ def main():
     with st.sidebar:
         st.header("⚙️ Configuration")
 
+        # Lien vers le Google Sheet
+        from utils import get_env
+        google_sheet_id = get_env('GOOGLE_SHEET_ID')
+        if google_sheet_id:
+            sheet_url = f"https://docs.google.com/spreadsheets/d/{google_sheet_id}/edit"
+            st.markdown(f"### 📊 [Ouvrir le Google Sheet]({sheet_url})")
+            st.caption("Voir les résultats en temps réel")
+
+        st.markdown("---")
+
         # Blacklist management
         st.subheader("🚫 Blacklist Entreprises")
         blacklist = CompanyBlacklist()
@@ -133,10 +143,10 @@ def main():
 
             st.markdown("**Sources utilisées** :")
             st.markdown("""
-            - 🔵 **Apollo.io** (via Apify) - Prioritaire
-            - 🟢 **Dropcontact** - Fallback
-            - 🟡 **Email Finder** - Construction d'emails
-            - 🟠 **Website Scraping** - Extraction depuis sites web
+            - 🔵 **Apollo.io** (via Apify) - Contacts B2B vérifiés
+            - 🟢 **Dropcontact** - Enrichissement emails (fallback)
+            - 🟡 **Email Finder** - Construction d'emails (fallback)
+            - 🤖 **GPT Scraping** - Extraction intelligente depuis sites web
             """)
 
             submit_people = st.form_submit_button(
@@ -180,7 +190,7 @@ def main():
                                 'apollo': '🔵',
                                 'dropcontact': '🟢',
                                 'constructed': '🟡',
-                                'scraped': '🟠'
+                                'gpt': '🤖'
                             }.get(source, '⚪')
                             st.write(f"{emoji} **{source.capitalize()}**: {count} contact(s)")
 
@@ -201,10 +211,10 @@ def main():
     **Étape 2 - People** :
     1. Lecture des entreprises depuis l'onglet
     2. Recherche de contacts via **4 sources** différentes
-    3. **Colonnes séparées par source** (Apollo, Dropcontact, EmailFinder, Website)
+    3. **Colonnes séparées par source** (Apollo, Dropcontact, EmailFinder, GPT)
     4. Export vers l'onglet **'People'**
 
-    💡 **Avantage** : Ne recherchez les contacts qu'une seule fois !
+    💡 **Avantage** : Ne recherchez les contacts qu'une seule fois ! GPT scrape intelligemment les sites web pour extraire emails, téléphones et contacts.
     """)
 
 

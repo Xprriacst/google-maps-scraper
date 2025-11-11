@@ -29,6 +29,7 @@ from company_blacklist import CompanyBlacklist
 from apollo_apify_scraper import ApolloApifyScraper
 from contact_enricher import ContactEnricher
 from database_manager import DatabaseManager
+from gpt_contact_scraper import GPTContactScraper
 from utils import get_env, get_gcp_credentials
 
 load_dotenv()
@@ -52,6 +53,7 @@ class TwoStepScraper:
         self.google_sheet = None
         self.blacklist = CompanyBlacklist()
         self.apollo_scraper = ApolloApifyScraper(self.apify_token)
+        self.gpt_scraper = GPTContactScraper()
         self.enricher = ContactEnricher(use_adaptive_targeting=False)  # On gère manuellement
         self.db = DatabaseManager()
 
@@ -162,12 +164,14 @@ class TwoStepScraper:
                 'Pattern',
                 'Conf. Construit',
 
-                # SOURCE 4: WEBSITE SCRAPING
-                'Email Scrapé',
-                'Conf. Scrapé',
+                # SOURCE 4: GPT SCRAPING (intelligent)
+                'Email GPT',
+                'Conf. GPT',
+                'Tel GPT',
+                'Notes GPT',
 
                 # METADATA
-                'Source Principale',  # apollo, dropcontact, constructed, scraped
+                'Source Principale',  # apollo, dropcontact, constructed, gpt
                 'Email Meilleur',  # Email avec la meilleure confiance
                 'Conf. Meilleure',  # Confiance du meilleur email
                 'Toutes Sources',  # Liste de toutes les sources utilisées
@@ -326,8 +330,8 @@ class TwoStepScraper:
             # Source 3: Email Finder (construction d'emails)
             constructed_emails = self._construct_emails(company_name, company_domain)
 
-            # Source 4: Website Scraping
-            scraped_emails = self._scrape_website(company.get('website'))
+            # Source 4: GPT Scraping (intelligent website scraping)
+            gpt_contacts = self._search_gpt(company.get('website'), company_name)
 
             # Fusionner toutes les sources
             contacts = self._merge_contact_sources(
@@ -336,7 +340,7 @@ class TwoStepScraper:
                 apollo_contacts,
                 dropcontact_contacts,
                 constructed_emails,
-                scraped_emails
+                gpt_contacts
             )
 
             all_contacts.extend(contacts)
@@ -377,19 +381,24 @@ class TwoStepScraper:
         # TODO: Implémenter
         return []
 
-    def _scrape_website(self, website: str) -> List[Dict]:
-        """Scraping d'emails sur le site web"""
-        # TODO: Implémenter
-        return []
+    def _search_gpt(self, website: str, company_name: str) -> List[Dict]:
+        """Recherche via GPT Scraping (intelligent)"""
+        try:
+            return self.gpt_scraper.scrape_website_contacts(website, company_name)
+        except Exception as e:
+            print(f"  ⚠️  Erreur GPT: {e}")
+            return []
 
     def _merge_contact_sources(self, company_name: str, company_domain: str,
                                apollo: List[Dict], dropcontact: List[Dict],
-                               constructed: List[Dict], scraped: List[Dict]) -> List[Dict]:
+                               constructed: List[Dict], gpt_contacts: List[Dict]) -> List[Dict]:
         """Fusionne les contacts de toutes les sources avec colonnes séparées"""
         merged = []
 
-        # TODO: Implémenter la fusion intelligente
-        # Pour l'instant, on retourne juste Apollo
+        # Fusionner intelligemment toutes les sources
+        # Stratégie: créer un contact par personne unique trouvée
+
+        # D'abord, traiter les contacts Apollo (source prioritaire)
         for contact in apollo:
             merged_contact = {
                 'company_name': company_name,
@@ -404,15 +413,17 @@ class TwoStepScraper:
                 'phone_apollo': contact.get('phone', ''),
                 'linkedin_apollo': contact.get('linkedin_url', ''),
 
-                # Autres sources (vides pour l'instant)
+                # Autres sources (vides pour Apollo)
                 'email_dropcontact': '',
                 'conf_dropcontact': '',
                 'phone_dropcontact': '',
                 'email_constructed': '',
                 'pattern': '',
                 'conf_constructed': '',
-                'email_scraped': '',
-                'conf_scraped': '',
+                'email_gpt': '',
+                'conf_gpt': '',
+                'phone_gpt': '',
+                'notes_gpt': '',
 
                 # Métadonnées
                 'source_principale': 'apollo',
@@ -422,6 +433,48 @@ class TwoStepScraper:
                 'date_added': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             }
             merged.append(merged_contact)
+
+        # Ensuite, traiter les contacts GPT
+        for contact in gpt_contacts:
+            merged_contact = {
+                'company_name': company_name,
+                'company_domain': company_domain,
+                'contact_name': contact.get('name', ''),
+                'position': contact.get('position', ''),
+                'location': '',
+
+                # Apollo (vide)
+                'email_apollo': '',
+                'conf_apollo': '',
+                'phone_apollo': '',
+                'linkedin_apollo': '',
+
+                # Dropcontact (vide)
+                'email_dropcontact': '',
+                'conf_dropcontact': '',
+                'phone_dropcontact': '',
+
+                # Email Finder (vide)
+                'email_constructed': '',
+                'pattern': '',
+                'conf_constructed': '',
+
+                # GPT
+                'email_gpt': contact.get('email', ''),
+                'conf_gpt': contact.get('confidence', 'medium'),
+                'phone_gpt': contact.get('phone', ''),
+                'notes_gpt': contact.get('notes', ''),
+
+                # Métadonnées
+                'source_principale': 'gpt',
+                'best_email': contact.get('email', ''),
+                'best_conf': contact.get('confidence', 'medium'),
+                'all_sources': 'gpt',
+                'date_added': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            merged.append(merged_contact)
+
+        # TODO: Implémenter la fusion Dropcontact et EmailFinder quand ces méthodes seront finalisées
 
         return merged
 
@@ -495,8 +548,10 @@ class TwoStepScraper:
                     contact.get('email_constructed', ''),
                     contact.get('pattern', ''),
                     contact.get('conf_constructed', ''),
-                    contact.get('email_scraped', ''),
-                    contact.get('conf_scraped', ''),
+                    contact.get('email_gpt', ''),
+                    contact.get('conf_gpt', ''),
+                    contact.get('phone_gpt', ''),
+                    contact.get('notes_gpt', ''),
                     contact.get('source_principale', ''),
                     contact.get('best_email', ''),
                     contact.get('best_conf', ''),

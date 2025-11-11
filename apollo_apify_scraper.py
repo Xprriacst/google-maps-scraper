@@ -15,6 +15,7 @@ class ApolloApifyScraper:
 
     # Acteurs Apify disponibles pour Apollo (par ordre de préférence)
     APOLLO_ACTORS = [
+        'apollo.io/apollo-io-lead-generator',  # Acteur officiel Apollo.io
         'curious_coder/apollo-io-scraper',
         'datavoyantlab/apollo-scraper',
         'supreme_coder/apollo-scraper',
