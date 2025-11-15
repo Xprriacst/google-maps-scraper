@@ -1,0 +1,7 @@
+# Dépendances minimales pour Google Maps Scraper Simple
+
+# Client Apify pour le scraping Google Maps
+apify-client==1.6.3
+
+# Gestion des variables d'environnement
+python-dotenv==1.0.0
